@@ -14,9 +14,15 @@ class AppScanner(private val context: Context) {
 
     fun scan(): List<InstalledApp> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
-        val resolved = if (Build.VERSION.SDK_INT >= 33) pm.queryIntentActivities(intent, flags)
-        else @Suppress("DEPRECATION") pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+        val resolved = if (Build.VERSION.SDK_INT >= 33) {
+            pm.queryIntentActivities(
+                intent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+        }
 
         val collator = Collator.getInstance()
         return resolved
