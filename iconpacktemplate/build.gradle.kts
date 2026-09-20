@@ -1,7 +1,35 @@
 import java.util.Base64
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 
 plugins {
     id("com.android.application")
+}
+
+abstract class GenerateIconSlotsTask : DefaultTask() {
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val root = outputDir.get().asFile
+        root.deleteRecursively()
+
+        val drawableDir = root.resolve("drawable-nodpi")
+        drawableDir.mkdirs()
+
+        val transparentPng = Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+5qVqGQAAAABJRU5ErkJggg=="
+        )
+
+        repeat(1024) { index ->
+            drawableDir
+                .resolve("icon_%04d.png".format(index))
+                .writeBytes(transparentPng)
+        }
+    }
 }
 
 android {
@@ -29,23 +57,15 @@ android {
     }
 }
 
-val slotResDir = layout.buildDirectory.dir("generated/slotRes")
-val generateIconSlots by tasks.registering {
-    outputs.dir(slotResDir)
-    doLast {
-        val drawableDir = slotResDir.get().dir("drawable-nodpi").asFile
-        drawableDir.mkdirs()
-        val transparentPng = Base64.getDecoder().decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+5qVqGQAAAABJRU5ErkJggg=="
-        )
-        repeat(1024) { index ->
-            drawableDir.resolve("icon_%04d.png".format(index)).writeBytes(transparentPng)
-        }
-    }
+val generateIconSlots = tasks.register<GenerateIconSlotsTask>("generateIconSlots") {
+    outputDir.set(layout.buildDirectory.dir("generated/slotRes"))
 }
 
-android.sourceSets["main"].res.srcDir(slotResDir.get().asFile)
-
-tasks.configureEach {
-    if (name.startsWith("merge") && name.endsWith("Resources")) dependsOn(generateIconSlots)
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(
+            generateIconSlots,
+            GenerateIconSlotsTask::outputDir
+        )
+    }
 }
