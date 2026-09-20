@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
 }
@@ -33,7 +35,7 @@ val generateIconSlots by tasks.registering {
     doLast {
         val drawableDir = slotResDir.get().dir("drawable-nodpi").asFile
         drawableDir.mkdirs()
-        val transparentPng = java.util.Base64.getDecoder().decode(
+        val transparentPng = Base64.getDecoder().decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+5qVqGQAAAABJRU5ErkJggg=="
         )
         repeat(1024) { index ->
