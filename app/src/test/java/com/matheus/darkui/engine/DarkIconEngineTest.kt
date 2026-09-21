@@ -469,6 +469,62 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun smallMonochromeGlyphCanInvertAfterLightBackgroundTurnsDark() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 12f
+        canvas.drawCircle(128f, 128f, 42f, paint)
+        canvas.drawLine(104f, 128f, 152f, 128f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "background should be dark",
+            BitmapUtils.luminance(result.getPixel(40, 40)) < 0.12f
+        )
+        assertTrue(
+            "small monochrome glyph should lift",
+            BitmapUtils.luminance(result.getPixel(128, 86)) > 0.45f
+        )
+    }
+
+    @Test
+    fun largeDarkArtworkDoesNotWhitenWhenBackgroundTurnsDark() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(235, 235, 235))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(35, 35, 38) }
+        canvas.drawCircle(92f, 128f, 48f, paint)
+        canvas.drawCircle(164f, 128f, 48f, paint)
+
+        paint.color = Color.WHITE
+        paint.strokeWidth = 8f
+        canvas.drawLine(72f, 128f, 112f, 128f, paint)
+        canvas.drawLine(164f, 108f, 164f, 148f, paint)
+        canvas.drawLine(144f, 128f, 184f, 128f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "large dark control should stay dark",
+            BitmapUtils.luminance(result.getPixel(92, 128)) < 0.16f
+        )
+        assertTrue(
+            "second large dark control should stay dark",
+            BitmapUtils.luminance(result.getPixel(164, 128)) < 0.16f
+        )
+        assertTrue(
+            "white symbol should remain bright",
+            BitmapUtils.luminance(result.getPixel(92, 128)) < 0.16f
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
