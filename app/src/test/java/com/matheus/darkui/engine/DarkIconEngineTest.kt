@@ -562,6 +562,104 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun calendarLikeIconTurnsWhiteBaseDarkAndLiftsBlackNumber() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.WHITE
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.rgb(28, 190, 181)
+        canvas.drawRect(24f, 24f, 232f, 92f, paint)
+
+        paint.color = Color.BLACK
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = 92f
+        canvas.drawText("21", 128f, 182f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "calendar base should become dark",
+            BitmapUtils.luminance(result.getPixel(72, 150)) < 0.12f
+        )
+        assertTrue(
+            "calendar number should be lifted",
+            BitmapUtils.luminance(result.getPixel(128, 150)) > 0.40f
+        )
+        assertTrue(
+            "calendar header should keep its hue identity",
+            Color.green(result.getPixel(128, 60)) > Color.red(result.getPixel(128, 60))
+        )
+    }
+
+    @Test
+    fun chatGptLikeCentralBlackMarkBecomesReadableOnDarkBase() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.WHITE
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.BLACK
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 12f
+        repeat(6) { i ->
+            val angle = Math.toRadians((i * 60.0))
+            val cx = 128f + (24f * kotlin.math.cos(angle)).toFloat()
+            val cy = 128f + (24f * kotlin.math.sin(angle)).toFloat()
+            canvas.drawCircle(cx, cy, 34f, paint)
+        }
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "ChatGPT-like base should become dark",
+            BitmapUtils.luminance(result.getPixel(54, 54)) < 0.12f
+        )
+        assertTrue(
+            "ChatGPT-like central mark should stay readable",
+            BitmapUtils.luminance(result.getPixel(128, 92)) > 0.35f
+        )
+    }
+
+    @Test
+    fun warmPinkRedGradientStaysSaturatedWhenDarkened() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint()
+
+        for (x in 0 until 256) {
+            val t = x / 255f
+            val r = 255
+            val g = (35 + 80 * t).toInt()
+            val b = (145 - 90 * t).toInt().coerceAtLeast(20)
+            paint.color = Color.rgb(r, g, b)
+            canvas.drawRect(x.toFloat(), 0f, x + 1f, 256f, paint)
+        }
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+        val sample = result.getPixel(96, 128)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(sample, hsv)
+
+        assertTrue(
+            "warm gradient should be dark",
+            hsv[2] < 0.22f
+        )
+        assertTrue(
+            "warm gradient should keep saturation and not turn muddy",
+            hsv[1] > 0.50f
+        )
+        assertTrue(
+            "warm gradient should remain red/pink-family",
+            hsv[0] < 40f || hsv[0] >= 300f
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
