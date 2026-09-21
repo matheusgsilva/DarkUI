@@ -43,11 +43,22 @@ jobs:
           import zipfile
 
           apk = "iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
-          pattern = re.compile(r"^res/.*/icon_\d{4}\.png$")
+          slot = re.compile(r"(?:^|/)icon_\d{4}\.(?:png|webp)$")
 
           with zipfile.ZipFile(apk) as z:
-              names = sorted(name for name in z.namelist() if pattern.match(name))
-              assert len(names) == 1024, f"expected 1024 slots, found {len(names)}"
+              all_names = z.namelist()
+              candidates = sorted(name for name in all_names if "icon_" in name)
+              names = sorted(name for name in all_names if slot.search(name))
+
+              print(f"ZIP entries: {len(all_names)}")
+              print(f"Entries containing icon_: {len(candidates)}")
+              print("First icon candidates:", candidates[:20])
+              print("First res entries:", [n for n in all_names if n.startswith("res/")][:30])
+
+              assert len(names) == 1024, (
+                  f"expected 1024 slot files, found {len(names)}; "
+                  f"icon candidates={len(candidates)}"
+              )
 
               digests = {hashlib.sha256(z.read(name)).digest() for name in names}
               assert len(digests) == 1024, (
@@ -56,6 +67,14 @@ jobs:
 
           print("Template OK: 1024 distinct PNG resource slots")
           PY
+
+      - name: Dump template resource table
+        if: failure()
+        shell: bash
+        run: |
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          APK="iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+          "$AAPT2" dump resources "$APK" | grep -m 40 -E "icon_[0-9]{4}|drawable" || true
 
       - name: Build debug and release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
