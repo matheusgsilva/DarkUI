@@ -98,10 +98,16 @@ class DarkIconEngineTest {
 
         val result = engine.generate(BitmapDrawable(resources, bitmap))
         val glyph = result.bitmap.getPixel(128, 128)
-        val background = result.bitmap.getPixel(128, 24)
+        val outside = result.bitmap.getPixel(128, 24)
 
-        assertTrue("transparent glyph luminance=${BitmapUtils.luminance(glyph)}", BitmapUtils.luminance(glyph) > 0.18f)
-        assertTrue("One UI frame luminance=${BitmapUtils.luminance(background)}", BitmapUtils.luminance(background) < 0.12f)
+        assertTrue(
+            "transparent glyph luminance=${BitmapUtils.luminance(glyph)}",
+            BitmapUtils.luminance(glyph) > 0.55f
+        )
+        assertTrue(
+            "transparent area must remain transparent",
+            Color.alpha(outside) == 0
+        )
     }
 
     @Test
@@ -138,7 +144,7 @@ class DarkIconEngineTest {
         )
         assertTrue(
             "black glyph must be lifted; luminance=${BitmapUtils.luminance(glyph)}",
-            BitmapUtils.luminance(glyph) > 0.18f
+            BitmapUtils.luminance(glyph) > 0.55f
         )
     }
 
@@ -211,6 +217,83 @@ class DarkIconEngineTest {
         assertTrue("detailed artwork should retain distinct regions", BitmapUtils.colorDistance(a, b) > 60f)
         assertTrue("first region must remain red-dominant", Color.red(a) > Color.blue(a))
         assertTrue("second region must remain blue-dominant", Color.blue(b) > Color.red(b))
+    }
+
+    @Test
+    fun transparentIconKeepsExactSilhouetteAndPosition() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+
+        canvas.drawRect(72f, 44f, 184f, 212f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+
+        for (y in 0 until 256 step 8) {
+            for (x in 0 until 256 step 8) {
+                val originalVisible = Color.alpha(bitmap.getPixel(x, y)) > 8
+                val generatedVisible = Color.alpha(result.bitmap.getPixel(x, y)) > 8
+                assertTrue(
+                    "alpha silhouette changed at x=$x y=$y",
+                    originalVisible == generatedVisible
+                )
+            }
+        }
+    }
+
+    @Test
+    fun mediumDarkGlyphIsInvertedInsteadOfLeftMuddy() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(230, 230, 230))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(55, 55, 55)
+        }
+        canvas.drawCircle(128f, 128f, 54f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+        val background = result.bitmap.getPixel(40, 40)
+        val glyph = result.bitmap.getPixel(128, 128)
+
+        assertTrue(
+            "background should be truly dark; luminance=${BitmapUtils.luminance(background)}",
+            BitmapUtils.luminance(background) < 0.10f
+        )
+        assertTrue(
+            "medium dark glyph should be inverted/lightened; luminance=${BitmapUtils.luminance(glyph)}",
+            BitmapUtils.luminance(glyph) > 0.45f
+        )
+    }
+
+    @Test
+    fun fullBleedIconKeepsOriginalOpaqueCanvas() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(240, 240, 240))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+        canvas.drawRect(100f, 70f, 156f, 186f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+
+        val points = listOf(
+            0 to 0,
+            0 to 255,
+            255 to 0,
+            255 to 255,
+            128 to 0,
+            0 to 128,
+            255 to 128,
+            128 to 255
+        )
+
+        points.forEach { (x, y) ->
+            assertTrue(
+                "full-bleed canvas alpha changed at x=$x y=$y",
+                Color.alpha(result.bitmap.getPixel(x, y)) == 255
+            )
+        }
     }
 
     @Test
