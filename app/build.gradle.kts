@@ -1,10 +1,8 @@
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
 plugins {
@@ -14,8 +12,11 @@ plugins {
 }
 
 abstract class PrepareTemplateApkTask : DefaultTask() {
-    @get:InputFile
-    @get:PathSensitive(PathSensitivity.NONE)
+    // The APK is produced by :iconpacktemplate:assembleRelease. Gradle 9.x validates
+    // @InputFile properties before dependency tasks have produced their outputs, so
+    // keeping this as @InputFile makes a clean build fail even though dependsOn is
+    // correct. The task verifies the produced file explicitly at execution time.
+    @get:Internal
     abstract val inputApk: RegularFileProperty
 
     @get:OutputDirectory
@@ -27,7 +28,12 @@ abstract class PrepareTemplateApkTask : DefaultTask() {
         destination.deleteRecursively()
         destination.mkdirs()
 
-        inputApk.get().asFile.copyTo(
+        val source = inputApk.get().asFile
+        check(source.isFile && source.length() > 0L) {
+            "Icon-pack template APK was not produced by :iconpacktemplate:assembleRelease: $source"
+        }
+
+        source.copyTo(
             destination.resolve("darkui-template.apk"),
             overwrite = true
         )
