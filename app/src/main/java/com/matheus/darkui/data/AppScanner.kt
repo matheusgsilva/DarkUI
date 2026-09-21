@@ -2,6 +2,7 @@ package com.matheus.darkui.data
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import com.matheus.darkui.model.InstalledApp
@@ -26,7 +27,10 @@ class AppScanner(private val context: Context) {
 
         val collator = Collator.getInstance()
         return resolved
-            .filter { it.activityInfo.packageName != context.packageName && it.activityInfo.packageName != "com.matheus.darkui.generatedpack" }
+            .filter {
+                it.activityInfo.packageName != context.packageName &&
+                    it.activityInfo.packageName != "com.matheus.darkui.generatedpack"
+            }
             .groupBy { it.activityInfo.packageName }
             .mapNotNull { (packageName, activities) ->
                 runCatching {
@@ -37,10 +41,21 @@ class AppScanner(private val context: Context) {
                     val packageInfo = if (Build.VERSION.SDK_INT >= 33) {
                         pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
                     } else {
-                        @Suppress("DEPRECATION") pm.getPackageInfo(packageName, 0)
+                        @Suppress("DEPRECATION")
+                        pm.getPackageInfo(packageName, 0)
                     }
-                    val versionCode = if (Build.VERSION.SDK_INT >= 28) packageInfo.longVersionCode
-                    else @Suppress("DEPRECATION") packageInfo.versionCode.toLong()
+                    val versionCode = if (Build.VERSION.SDK_INT >= 28) {
+                        packageInfo.longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        packageInfo.versionCode.toLong()
+                    }
+
+                    val appInfo = first.activityInfo.applicationInfo
+                    @Suppress("DEPRECATION")
+                    val isGame = appInfo.category == ApplicationInfo.CATEGORY_GAME ||
+                        (appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+
                     InstalledApp(
                         packageName = packageName,
                         label = label,
@@ -49,7 +64,8 @@ class AppScanner(private val context: Context) {
                             LaunchComponent(it.activityInfo.packageName, it.activityInfo.name)
                         }.distinct(),
                         sourceDrawable = drawable,
-                        originalBitmap = bitmap
+                        originalBitmap = bitmap,
+                        isGame = isGame
                     )
                 }.getOrNull()
             }

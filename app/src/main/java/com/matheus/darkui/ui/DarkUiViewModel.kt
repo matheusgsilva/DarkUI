@@ -216,7 +216,7 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
                 return SmartIconResult(it, "Cache inteligente", 1f)
             }
         }
-        val generated = engine.generate(item.app.sourceDrawable, style)
+        val generated = engine.generate(item.app.sourceDrawable, style, isGame = item.app.isGame)
         cache.put(item.app.packageName, item.app.versionCode, style, generated.bitmap)
         return generated
     }

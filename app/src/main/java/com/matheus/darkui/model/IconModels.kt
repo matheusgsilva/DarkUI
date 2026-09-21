@@ -30,7 +30,8 @@ data class InstalledApp(
     val versionCode: Long,
     val components: List<LaunchComponent>,
     val sourceDrawable: Drawable,
-    val originalBitmap: Bitmap
+    val originalBitmap: Bitmap,
+    val isGame: Boolean = false
 )
 
 data class SmartIconResult(
