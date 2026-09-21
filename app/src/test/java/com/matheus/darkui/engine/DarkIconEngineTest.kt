@@ -209,7 +209,8 @@ class DarkIconEngineTest {
         val a = result.bitmap.getPixel(48, 48)
         val b = result.bitmap.getPixel(64, 48)
         assertTrue("detailed artwork should retain distinct regions", BitmapUtils.colorDistance(a, b) > 60f)
-        assertTrue("detailed artwork should use preservation path", result.method.contains("preservada"))
+        assertTrue("first region must remain red-dominant", Color.red(a) > Color.blue(a))
+        assertTrue("second region must remain blue-dominant", Color.blue(b) > Color.red(b))
     }
 
     @Test
