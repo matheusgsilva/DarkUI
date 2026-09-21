@@ -17,9 +17,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class DarkIconEngineTest {
     private val engine = DarkIconEngine(256)
     private val resources get() = RuntimeEnvironment.getApplication().resources
@@ -37,8 +39,8 @@ class DarkIconEngineTest {
         val background = result.bitmap.getPixel(128, 20)
         val foreground = result.bitmap.getPixel(128, 128)
 
-        assertTrue("adaptive background must become visibly dark", BitmapUtils.luminance(background) < 0.12f)
-        assertTrue("light foreground must stay legible", BitmapUtils.luminance(foreground) > 0.65f)
+        assertTrue("adaptive background luminance=${BitmapUtils.luminance(background)}", BitmapUtils.luminance(background) < 0.12f)
+        assertTrue("adaptive foreground luminance=${BitmapUtils.luminance(foreground)}", BitmapUtils.luminance(foreground) > 0.65f)
         assertTrue(result.method.contains("adaptive"))
     }
 
@@ -56,8 +58,8 @@ class DarkIconEngineTest {
         val background = result.bitmap.getPixel(128, 24)
         val logo = result.bitmap.getPixel(128, 128)
 
-        assertTrue("simple brand background must become dark", BitmapUtils.luminance(background) < 0.14f)
-        assertTrue("white logo must remain bright", BitmapUtils.luminance(logo) > 0.70f)
+        assertTrue("legacy background luminance=${BitmapUtils.luminance(background)}", BitmapUtils.luminance(background) < 0.14f)
+        assertTrue("legacy logo luminance=${BitmapUtils.luminance(logo)}", BitmapUtils.luminance(logo) > 0.70f)
     }
 
     @Test
@@ -77,7 +79,7 @@ class DarkIconEngineTest {
         val result = engine.generate(BitmapDrawable(resources, bitmap), isGame = true)
         val generatedLuminance = averageLuminance(result.bitmap)
 
-        assertTrue("game artwork should be darker", generatedLuminance < originalLuminance * 0.90f)
+        assertTrue("game luminance original=$originalLuminance generated=$generatedLuminance", generatedLuminance < originalLuminance * 0.90f)
 
         val redArea = result.bitmap.getPixel(64, 64)
         val blueArea = result.bitmap.getPixel(64, 192)
@@ -98,8 +100,8 @@ class DarkIconEngineTest {
         val glyph = result.bitmap.getPixel(128, 128)
         val background = result.bitmap.getPixel(128, 24)
 
-        assertTrue("dark transparent glyph must be made visible", BitmapUtils.luminance(glyph) > 0.18f)
-        assertTrue("One UI frame must remain dark", BitmapUtils.luminance(background) < 0.12f)
+        assertTrue("transparent glyph luminance=${BitmapUtils.luminance(glyph)}", BitmapUtils.luminance(glyph) > 0.18f)
+        assertTrue("One UI frame luminance=${BitmapUtils.luminance(background)}", BitmapUtils.luminance(background) < 0.12f)
     }
 
     @Test
