@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.ColorDrawable
@@ -348,6 +349,62 @@ class DarkIconEngineTest {
                 Color.alpha(result.bitmap.getPixel(x, y)) == 255
             )
         }
+    }
+
+    @Test
+    fun maskedBrandIconDarkensSurfaceButKeepsMaskAndWhiteLogo() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(24, 119, 242)
+        canvas.drawRoundRect(RectF(28f, 28f, 228f, 228f), 48f, 48f, paint)
+
+        paint.color = Color.WHITE
+        canvas.drawRect(116f, 76f, 140f, 188f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "masked background should be dark; luminance=${BitmapUtils.luminance(result.getPixel(70, 70))}",
+            BitmapUtils.luminance(result.getPixel(70, 70)) < 0.12f
+        )
+        assertTrue(
+            "white logo should stay bright; luminance=${BitmapUtils.luminance(result.getPixel(128, 128))}",
+            BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f
+        )
+
+        for (y in 0 until 256 step 8) {
+            for (x in 0 until 256 step 8) {
+                val before = Color.alpha(bitmap.getPixel(x, y)) > 8
+                val after = Color.alpha(result.getPixel(x, y)) > 8
+                assertTrue("masked alpha changed at x=$x y=$y", before == after)
+            }
+        }
+    }
+
+    @Test
+    fun maskedLightNeutralBaseBecomesDarkWithoutChangingGeometry() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(240, 240, 240)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.rgb(22, 120, 65)
+        canvas.drawCircle(128f, 128f, 56f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "neutral masked base should be dark",
+            BitmapUtils.luminance(result.getPixel(64, 64)) < 0.12f
+        )
+        assertTrue(
+            "transparent corner must stay transparent",
+            Color.alpha(result.getPixel(4, 4)) == 0
+        )
     }
 
     @Test
