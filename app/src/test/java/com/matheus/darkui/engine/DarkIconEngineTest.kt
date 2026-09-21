@@ -408,6 +408,67 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun alreadyDarkMaskedIconDoesNotWhitenDarkArtwork() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(18, 20, 24)
+        canvas.drawRoundRect(RectF(28f, 28f, 228f, 228f), 48f, 48f, paint)
+
+        paint.color = Color.rgb(70, 75, 82)
+        canvas.drawCircle(128f, 128f, 54f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        val beforeBackground = bitmap.getPixel(70, 70)
+        val afterBackground = result.getPixel(70, 70)
+        val beforeGlyph = bitmap.getPixel(128, 128)
+        val afterGlyph = result.getPixel(128, 128)
+
+        assertTrue(
+            "dark background should remain dark",
+            BitmapUtils.luminance(afterBackground) < 0.10f
+        )
+        assertTrue(
+            "dark glyph must not be whitened",
+            BitmapUtils.luminance(afterGlyph) < 0.16f
+        )
+        assertTrue(
+            "dark background changed too much",
+            BitmapUtils.colorDistance(beforeBackground, afterBackground) < 8f
+        )
+        assertTrue(
+            "dark glyph changed too much",
+            BitmapUtils.colorDistance(beforeGlyph, afterGlyph) < 8f
+        )
+    }
+
+    @Test
+    fun darkBackgroundWithBrightLogoKeepsBrightLogoAndDarkBase() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(20, 22, 26)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.WHITE
+        canvas.drawRect(116f, 72f, 140f, 188f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "existing dark base should remain dark",
+            BitmapUtils.luminance(result.getPixel(64, 64)) < 0.10f
+        )
+        assertTrue(
+            "existing bright logo should stay bright",
+            BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
