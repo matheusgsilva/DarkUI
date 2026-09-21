@@ -79,17 +79,30 @@ jobs:
       - name: Build debug and release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
 
-      - name: Verify template is embedded
+      - name: Verify embedded template integrity
         shell: bash
         run: |
           python3 - <<'PY'
+          import hashlib
           import zipfile
 
-          apk = "app/build/outputs/apk/debug/app-debug.apk"
-          with zipfile.ZipFile(apk) as z:
+          app_apk = "app/build/outputs/apk/debug/app-debug.apk"
+          template_apk = "iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+
+          with open(template_apk, "rb") as f:
+              expected = f.read()
+
+          with zipfile.ZipFile(app_apk) as z:
               names = set(z.namelist())
               assert "assets/darkui-template.apk" in names, "template asset missing from app APK"
-          print("Main APK contains darkui-template.apk")
+              embedded = z.read("assets/darkui-template.apk")
+
+          assert embedded == expected, (
+              "embedded template differs from the validated template: "
+              f"{hashlib.sha256(embedded).hexdigest()} != "
+              f"{hashlib.sha256(expected).hexdigest()}"
+          )
+          print("Main APK contains the exact validated darkui-template.apk")
           PY
 
       - name: Run dark-icon unit tests
