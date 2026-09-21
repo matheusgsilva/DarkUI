@@ -4,6 +4,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import com.android.build.api.artifact.SingleArtifact
 
 plugins {
     id("com.android.application")
@@ -75,5 +76,23 @@ androidComponents {
             generateIconSlots,
             GenerateIconSlotsTask::outputDir
         )
+    }
+}
+
+
+val stageTemplateApk = tasks.register<Sync>("stageTemplateApk") {
+    into(layout.buildDirectory.dir("stagedTemplate"))
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val apkDir = variant.artifacts.get(SingleArtifact.APK)
+        stageTemplateApk.configure {
+            dependsOn(variant.assembleProvider)
+            from(apkDir) {
+                include("*.apk")
+                rename { "darkui-template.apk" }
+            }
+        }
     }
 }
