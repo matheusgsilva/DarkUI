@@ -35,8 +35,8 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Build icon-pack template
-        run: gradle :iconpacktemplate:assembleRelease --stacktrace
+      - name: Build and stage icon-pack template
+        run: gradle :iconpacktemplate:stageTemplateApk --stacktrace
 
       - name: Verify 1024 unique icon slots
         shell: bash
@@ -46,13 +46,7 @@ jobs:
           import re
           import zipfile
 
-          import glob
-
-          matches = sorted(glob.glob("iconpacktemplate/build/outputs/apk/release/**/*.apk", recursive=True))
-          assert matches, "no template APK found under iconpacktemplate/build/outputs/apk/release"
-          apk = next((p for p in matches if "unsigned" in p.lower()), matches[0])
-          print("Using template APK:", apk)
-
+          apk = "iconpacktemplate/build/stagedTemplate/darkui-template.apk"
           slot = re.compile(r"^res/.*/icon_\d{4}\.png$")
 
           with zipfile.ZipFile(apk) as z:
@@ -83,8 +77,8 @@ jobs:
         shell: bash
         run: |
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          APK="$(find iconpacktemplate/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
-          if [ -n "$APK" ]; then
+          APK="iconpacktemplate/build/stagedTemplate/darkui-template.apk"
+          if [ -f "$APK" ]; then
             "$AAPT2" dump resources "$APK" | grep -m 40 -E "icon_[0-9]{4}|drawable" || true
           fi
 
@@ -95,15 +89,11 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import glob
           import hashlib
           import zipfile
 
           app_apk = "app/build/outputs/apk/debug/app-debug.apk"
-          matches = sorted(glob.glob("iconpacktemplate/build/outputs/apk/release/**/*.apk", recursive=True))
-          assert matches, "no template APK found under iconpacktemplate/build/outputs/apk/release"
-          template_apk = next((p for p in matches if "unsigned" in p.lower()), matches[0])
-          print("Using template APK:", template_apk)
+          template_apk = "iconpacktemplate/build/stagedTemplate/darkui-template.apk"
 
           with open(template_apk, "rb") as f:
               expected = f.read()
