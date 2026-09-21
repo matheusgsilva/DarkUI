@@ -119,6 +119,54 @@ class DarkIconEngineTest {
         assertTrue(BitmapUtils.luminance(result.bitmap.getPixel(128, 24)) < 0.10f)
     }
 
+    @Test
+    fun smoothBrandGradientBecomesDarkWithoutDestroyingWhiteLogo() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        for (y in 0 until 256) {
+            val t = y / 255f
+            val r = (210 + (110 - 210) * t).toInt()
+            val g = (55 + (60 - 55) * t).toInt()
+            val b = (180 + (235 - 180) * t).toInt()
+            paint.color = Color.rgb(r, g, b)
+            canvas.drawRect(0f, y.toFloat(), 256f, y + 1f, paint)
+        }
+
+        paint.color = Color.WHITE
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 18f
+        canvas.drawCircle(128f, 128f, 62f, paint)
+        paint.style = Paint.Style.FILL
+        canvas.drawCircle(128f, 128f, 13f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+        val background = result.bitmap.getPixel(40, 40)
+        val logo = result.bitmap.getPixel(128, 66)
+
+        assertTrue(
+            "gradient background luminance=${BitmapUtils.luminance(background)}",
+            BitmapUtils.luminance(background) < 0.16f
+        )
+        assertTrue(
+            "white logo luminance=${BitmapUtils.luminance(logo)}",
+            BitmapUtils.luminance(logo) > 0.65f
+        )
+        assertTrue(result.method.contains("gradiente"))
+    }
+
+    @Test
+    fun generatedIconsAlwaysUseRequestedOutputSize() {
+        val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+
+        assertTrue(result.bitmap.width == 256)
+        assertTrue(result.bitmap.height == 256)
+    }
+
     private fun averageLuminance(bitmap: Bitmap): Float {
         var total = 0f
         var count = 0
