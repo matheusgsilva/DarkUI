@@ -145,7 +145,7 @@ class DarkIconEngineTest {
     }
 
     @Test
-    fun transparentDarkGlyphIsLiftedForDarkBackground() {
+    fun transparentAlreadyDarkGlyphStaysDarkAndTransparent() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
@@ -156,8 +156,8 @@ class DarkIconEngineTest {
         val outside = result.bitmap.getPixel(128, 24)
 
         assertTrue(
-            "transparent glyph luminance=${BitmapUtils.luminance(glyph)}",
-            BitmapUtils.luminance(glyph) > 0.55f
+            "already-dark transparent glyph must stay dark",
+            BitmapUtils.luminance(glyph) < 0.03f
         )
         assertTrue(
             "transparent area must remain transparent",
@@ -186,8 +186,13 @@ class DarkIconEngineTest {
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
-        canvas.drawRect(112f, 54f, 144f, 202f, paint)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 10f
+        }
+        canvas.drawCircle(128f, 128f, 44f, paint)
+        canvas.drawLine(104f, 128f, 152f, 128f, paint)
 
         val result = engine.generate(BitmapDrawable(resources, bitmap))
         val background = result.bitmap.getPixel(42, 42)
@@ -198,8 +203,8 @@ class DarkIconEngineTest {
             BitmapUtils.luminance(background) < 0.14f
         )
         assertTrue(
-            "black glyph must be lifted; luminance=${BitmapUtils.luminance(glyph)}",
-            BitmapUtils.luminance(glyph) > 0.55f
+            "thin black glyph must be lifted; luminance=${BitmapUtils.luminance(glyph)}",
+            BitmapUtils.luminance(result.bitmap.getPixel(128, 84)) > 0.45f
         )
     }
 
@@ -297,7 +302,7 @@ class DarkIconEngineTest {
     }
 
     @Test
-    fun mediumDarkGlyphIsInvertedInsteadOfLeftMuddy() {
+    fun mediumDarkSolidArtworkStaysDarkInsteadOfTurningWhite() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.rgb(230, 230, 230))
@@ -316,8 +321,8 @@ class DarkIconEngineTest {
             BitmapUtils.luminance(background) < 0.10f
         )
         assertTrue(
-            "medium dark glyph should be inverted/lightened; luminance=${BitmapUtils.luminance(glyph)}",
-            BitmapUtils.luminance(glyph) > 0.45f
+            "solid dark artwork should remain dark; luminance=${BitmapUtils.luminance(glyph)}",
+            BitmapUtils.luminance(glyph) < 0.18f
         )
     }
 
@@ -656,6 +661,204 @@ class DarkIconEngineTest {
         assertTrue(
             "warm gradient should remain red/pink-family",
             hsv[0] < 40f || hsv[0] >= 300f
+        )
+    }
+
+    @Test
+    fun chromeLikeMulticolorLogoKeepsBrandColorsOnDarkBase() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.WHITE
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.RED
+        canvas.drawRect(76f, 82f, 128f, 128f, paint)
+        paint.color = Color.rgb(255, 205, 0)
+        canvas.drawRect(128f, 82f, 180f, 128f, paint)
+        paint.color = Color.rgb(20, 150, 70)
+        canvas.drawRect(76f, 128f, 128f, 174f, paint)
+        paint.color = Color.rgb(45, 110, 230)
+        canvas.drawCircle(128f, 128f, 28f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue("white base should become dark", BitmapUtils.luminance(result.getPixel(54, 54)) < 0.12f)
+        val red = result.getPixel(90, 95)
+        val yellow = result.getPixel(165, 95)
+        val green = result.getPixel(90, 160)
+        val blue = result.getPixel(128, 128)
+        assertTrue("red identity lost", Color.red(red) > Color.green(red))
+        assertTrue("yellow identity lost", Color.red(yellow) > Color.blue(yellow) && Color.green(yellow) > Color.blue(yellow))
+        assertTrue("green identity lost", Color.green(green) > Color.red(green))
+        assertTrue("blue identity lost", Color.blue(blue) > Color.red(blue))
+    }
+
+    @Test
+    fun redBankLikeIconKeepsRedHueAndWhiteLogo() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(225, 35, 45)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+        paint.color = Color.WHITE
+        canvas.drawCircle(128f, 128f, 42f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+        val bg = result.getPixel(60, 60)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(bg, hsv)
+
+        assertTrue("red background should become dark", hsv[2] < 0.22f)
+        assertTrue("red hue should remain red", hsv[0] < 30f || hsv[0] > 330f)
+        assertTrue("red saturation should remain strong", hsv[1] > 0.50f)
+        assertTrue("white logo should stay bright", BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f)
+    }
+
+    @Test
+    fun yellowBankLikeIconDoesNotTurnBrownOrGray() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(250, 215, 20)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+        paint.color = Color.rgb(20, 65, 170)
+        canvas.drawRect(92f, 102f, 164f, 154f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+        val bg = result.getPixel(60, 60)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(bg, hsv)
+
+        assertTrue("yellow background should become dark", hsv[2] < 0.22f)
+        assertTrue("yellow should keep saturation", hsv[1] > 0.45f)
+        assertTrue("yellow hue should remain yellow/gold", hsv[0] in 35f..75f)
+        val logo = result.getPixel(128, 128)
+        assertTrue("blue bank logo should remain blue", Color.blue(logo) > Color.red(logo))
+    }
+
+    @Test
+    fun purplePinkGradientKeepsHueSeparationWithoutMud() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint()
+
+        for (x in 0 until 256) {
+            val t = x / 255f
+            val r = (150 + 100 * t).toInt()
+            val g = (40 + 5 * t).toInt()
+            val b = (220 - 80 * t).toInt()
+            paint.color = Color.rgb(r, g, b)
+            canvas.drawRect(x.toFloat(), 0f, x + 1f, 256f, paint)
+        }
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+        val left = result.getPixel(40, 128)
+        val right = result.getPixel(216, 128)
+        val leftHsv = FloatArray(3)
+        val rightHsv = FloatArray(3)
+        Color.colorToHSV(left, leftHsv)
+        Color.colorToHSV(right, rightHsv)
+
+        assertTrue("purple side lost saturation", leftHsv[1] > 0.45f)
+        assertTrue("pink side lost saturation", rightHsv[1] > 0.45f)
+        assertTrue("gradient hue separation collapsed", kotlin.math.abs(leftHsv[0] - rightHsv[0]) > 10f)
+    }
+
+    @Test
+    fun cameraLikeMetallicBodyKeepsDarkLensAndBrightHousing() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(225, 228, 232)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+        paint.color = Color.WHITE
+        canvas.drawRoundRect(RectF(64f, 78f, 192f, 178f), 24f, 24f, paint)
+        paint.color = Color.rgb(28, 30, 34)
+        canvas.drawCircle(128f, 128f, 42f, paint)
+        paint.color = Color.rgb(70, 105, 185)
+        canvas.drawCircle(128f, 128f, 20f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue("metallic outer surface should darken", BitmapUtils.luminance(result.getPixel(50, 50)) < 0.18f)
+        assertTrue("camera lens should remain dark", BitmapUtils.luminance(result.getPixel(128, 100)) < 0.20f)
+        assertTrue("blue lens detail should remain blue", Color.blue(result.getPixel(128, 128)) > Color.red(result.getPixel(128, 128)))
+    }
+
+    @Test
+    fun twoToneSamsungLikeIconPreservesSecondaryBrightColor() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(35, 155, 220)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+        paint.color = Color.WHITE
+        canvas.drawRect(74f, 72f, 102f, 188f, paint)
+        paint.color = Color.rgb(85, 235, 155)
+        canvas.drawCircle(88f, 128f, 16f, paint)
+        paint.color = Color.rgb(245, 80, 210)
+        canvas.drawCircle(160f, 170f, 17f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue("blue base should darken", BitmapUtils.luminance(result.getPixel(60, 60)) < 0.16f)
+        assertTrue("white control should remain bright", BitmapUtils.luminance(result.getPixel(88, 90)) > 0.70f)
+        val green = result.getPixel(88, 128)
+        val pink = result.getPixel(160, 170)
+        assertTrue("green accent lost", Color.green(green) > Color.red(green))
+        assertTrue("pink accent lost", Color.red(pink) > Color.green(pink) && Color.blue(pink) > Color.green(pink))
+    }
+
+    @Test
+    fun alreadyDarkColoredBrandIconIsNearlyPixelStable() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(12, 18, 38)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+        paint.color = Color.rgb(38, 95, 205)
+        canvas.drawRect(102f, 72f, 154f, 184f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "already-dark background changed too much",
+            BitmapUtils.colorDistance(bitmap.getPixel(60, 60), result.getPixel(60, 60)) < 8f
+        )
+        assertTrue(
+            "already-dark colored logo changed too much",
+            BitmapUtils.colorDistance(bitmap.getPixel(128, 128), result.getPixel(128, 128)) < 8f
+        )
+    }
+
+    @Test
+    fun detailedPhotoLikeArtworkUsesPreservationInsteadOfFlatRecolor() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint()
+
+        for (y in 0 until 256 step 8) {
+            for (x in 0 until 256 step 8) {
+                paint.color = Color.rgb(
+                    (40 + x * 3 / 4).coerceAtMost(235),
+                    (35 + y * 2 / 3).coerceAtMost(220),
+                    (55 + (x + y) / 3).coerceAtMost(235)
+                )
+                canvas.drawRect(x.toFloat(), y.toFloat(), (x + 8).toFloat(), (y + 8).toFloat(), paint)
+            }
+        }
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+        assertTrue(
+            "photo-like artwork should retain local color differences",
+            BitmapUtils.colorDistance(result.getPixel(48, 48), result.getPixel(200, 200)) > 60f
         )
     }
 
