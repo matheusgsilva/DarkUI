@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 10
+        const val ENGINE_VERSION = 11
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -95,11 +95,11 @@ class DarkIconEngine(private val size: Int = 256) {
         }
 
         if (analysis.edgeOpaqueRatio < 0.45f) {
-            val foreground = liftTransparentForeground(source)
+            val masked = recolorMaskedIcon(source, analysis)
             return SmartIconResult(
-                bitmap = foreground,
-                method = "Dark automático • símbolo preservado",
-                confidence = 0.94f
+                bitmap = masked,
+                method = "Dark automático • máscara preservada",
+                confidence = 0.96f
             )
         }
 
@@ -133,6 +133,118 @@ class DarkIconEngine(private val size: Int = 256) {
             method = "Dark automático • arte preservada",
             confidence = 0.82f
         )
+    }
+
+    private fun recolorMaskedIcon(source: Bitmap, analysis: IconAnalysis): Bitmap {
+        val boundary = sampleOpaqueInnerBoundary(source)
+        val opaqueBoundary = boundary.filter { Color.alpha(it) > 160 }
+
+        if (opaqueBoundary.isNotEmpty()) {
+            val boundaryMean = BitmapUtils.meanOpaqueColor(opaqueBoundary)
+            val uniformity = opaqueBoundary
+                .map { BitmapUtils.colorDistance(it, boundaryMean) }
+                .average()
+                .toFloat()
+
+            if (uniformity <= 62f && isUsefulBackgroundColor(boundaryMean)) {
+                return recolorBackgroundLikePixels(source, boundaryMean)
+            }
+        }
+
+        if (
+            analysis.dominantCanvasCoverage >= 0.16f &&
+            isUsefulBackgroundColor(analysis.dominantColor) &&
+            analysis.detail <= 0.42f
+        ) {
+            return recolorDominantRegion(source, analysis.dominantColor)
+        }
+
+        return darkenMaskedSurface(source)
+    }
+
+    private fun sampleOpaqueInnerBoundary(bitmap: Bitmap): List<Int> {
+        var minX = bitmap.width
+        var minY = bitmap.height
+        var maxX = -1
+        var maxY = -1
+
+        for (y in 0 until bitmap.height step 2) {
+            for (x in 0 until bitmap.width step 2) {
+                if (Color.alpha(bitmap.getPixel(x, y)) > 160) {
+                    minX = minOf(minX, x)
+                    minY = minOf(minY, y)
+                    maxX = maxOf(maxX, x)
+                    maxY = maxOf(maxY, y)
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) return emptyList()
+
+        val width = (maxX - minX + 1).coerceAtLeast(1)
+        val height = (maxY - minY + 1).coerceAtLeast(1)
+        val insetX = (width * 0.10f).roundToInt().coerceAtLeast(1)
+        val insetY = (height * 0.10f).roundToInt().coerceAtLeast(1)
+
+        val left = (minX + insetX).coerceIn(0, bitmap.width - 1)
+        val right = (maxX - insetX).coerceIn(0, bitmap.width - 1)
+        val top = (minY + insetY).coerceIn(0, bitmap.height - 1)
+        val bottom = (maxY - insetY).coerceIn(0, bitmap.height - 1)
+
+        val samples = ArrayList<Int>(128)
+        val points = 32
+        repeat(points) { i ->
+            val tx = if (points <= 1) 0f else i / (points - 1f)
+            val x = (left + (right - left) * tx).roundToInt()
+            val y = (top + (bottom - top) * tx).roundToInt()
+
+            listOf(
+                bitmap.getPixel(x, top),
+                bitmap.getPixel(x, bottom),
+                bitmap.getPixel(left, y),
+                bitmap.getPixel(right, y)
+            ).forEach { color ->
+                if (Color.alpha(color) > 160) samples += color
+            }
+        }
+        return samples
+    }
+
+    private fun darkenMaskedSurface(source: Bitmap): Bitmap {
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        val hsv = FloatArray(3)
+
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val alpha = Color.alpha(c)
+            if (alpha < 8) continue
+
+            val lum = BitmapUtils.luminance(c)
+            Color.colorToHSV(c, hsv)
+
+            pixels[i] = when {
+                // Keep bright neutral logo strokes/details bright.
+                hsv[1] < 0.14f && lum > 0.72f -> c
+
+                // Dark monochrome strokes should invert instead of becoming muddy.
+                lum < 0.20f -> improveForegroundPixel(c)
+
+                // Colored surface: preserve hue, push it decisively into Dark.
+                hsv[1] >= 0.18f -> {
+                    hsv[1] = (hsv[1] * 0.98f).coerceIn(0f, 1f)
+                    hsv[2] = minOf(hsv[2], 0.18f)
+                    Color.HSVToColor(alpha, hsv)
+                }
+
+                // Light neutral surface/background.
+                else -> blend(c, DARK_NEUTRAL, 0.90f)
+            }
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
     }
 
     private fun recolorBackgroundLikePixels(source: Bitmap, background: Int): Bitmap {
