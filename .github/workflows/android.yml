@@ -105,7 +105,7 @@ jobs:
           print("Main APK contains the exact validated darkui-template.apk")
           PY
 
-      - name: Run dark-icon unit tests
+      - name: Run unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
 
       - name: Run Android lint
