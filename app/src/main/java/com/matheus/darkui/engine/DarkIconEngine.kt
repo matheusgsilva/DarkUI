@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 14
+        const val ENGINE_VERSION = 15
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -236,32 +236,43 @@ class DarkIconEngine(private val size: Int = 256) {
         val hsv = FloatArray(3)
 
         for (i in pixels.indices) {
-            val c = pixels[i]
-            val alpha = Color.alpha(c)
+            val color = pixels[i]
+            val alpha = Color.alpha(color)
             if (alpha < 8) continue
 
-            val lum = BitmapUtils.luminance(c)
-            Color.colorToHSV(c, hsv)
+            val luminance = BitmapUtils.luminance(color)
+            Color.colorToHSV(color, hsv)
 
             pixels[i] = when {
-                // Keep bright neutral logo strokes/details bright.
-                hsv[1] < 0.14f && lum > 0.72f -> c
+                // Preserve authored bright glyphs and highlights.
+                hsv[1] < 0.14f && luminance > 0.72f -> color
 
-                // Only lift dark strokes after we deliberately converted a light
-                // surface to dark. Existing dark artwork must remain untouched.
-                lum < 0.20f && allowDarkPixelLift -> improveForegroundPixel(c)
+                // Preserve dark artwork by default. This fallback must not turn
+                // lenses, controls or shadows white.
+                luminance < 0.20f && !allowDarkPixelLift -> color
 
-                lum < 0.20f -> c
+                luminance < 0.20f && allowDarkPixelLift -> improveForegroundPixel(color)
 
-                // Colored surface: preserve hue, push it decisively into Dark.
                 hsv[1] >= 0.18f -> {
-                    hsv[1] = (hsv[1] * 0.98f).coerceIn(0f, 1f)
-                    hsv[2] = minOf(hsv[2], 0.18f)
+                    val hue = hsv[0]
+                    val isWarm = hue < 28f || hue >= 300f
+
+                    hsv[1] = if (isWarm) {
+                        (hsv[1] * 0.98f).coerceIn(0.55f, 1f)
+                    } else {
+                        (hsv[1] * 0.95f).coerceIn(0.22f, 1f)
+                    }
+
+                    hsv[2] = if (isWarm) {
+                        minOf(hsv[2], 0.18f)
+                    } else {
+                        minOf(hsv[2], 0.16f)
+                    }
+
                     Color.HSVToColor(alpha, hsv)
                 }
 
-                // Light neutral surface/background.
-                else -> blend(c, DARK_NEUTRAL, 0.90f)
+                else -> blend(color, Color.rgb(20, 20, 24), 0.82f)
             }
         }
 
@@ -275,7 +286,7 @@ class DarkIconEngine(private val size: Int = 256) {
         }
 
         val target = deriveDarkVariant(background)
-        val allowForegroundLift = shouldLiftDarkForeground(source, background)
+        val allowForegroundLift = shouldLiftCentralGlyph(source, background)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -289,7 +300,7 @@ class DarkIconEngine(private val size: Int = 256) {
             val backgroundWeight = 1f - foregroundWeight
 
             pixels[i] = if (backgroundWeight > 0.025f) {
-                blend(c, target, backgroundWeight * 0.97f)
+                blend(c, target, backgroundWeight * 0.95f)
             } else if (allowForegroundLift) {
                 improveForegroundPixel(c)
             } else {
@@ -369,7 +380,7 @@ class DarkIconEngine(private val size: Int = 256) {
 
     private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
         val target = deriveDarkVariant(dominantColor)
-        val allowForegroundLift = shouldLiftDarkForeground(source, dominantColor)
+        val allowForegroundLift = shouldLiftCentralGlyph(source, dominantColor)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -382,7 +393,7 @@ class DarkIconEngine(private val size: Int = 256) {
             val weight = 1f - BitmapUtils.smoothStep(24f, 88f, distance)
 
             pixels[i] = if (weight > 0.03f) {
-                blend(c, target, weight * 0.96f)
+                blend(c, target, weight * 0.95f)
             } else if (allowForegroundLift) {
                 improveForegroundPixel(c)
             } else {
@@ -394,83 +405,80 @@ class DarkIconEngine(private val size: Int = 256) {
         return out
     }
 
-    private fun shouldLiftDarkForeground(source: Bitmap, background: Int): Boolean {
-        val width = source.width
-        val height = source.height
-        val mask = BooleanArray(width * height)
-
-        var opaque = 0
-        var darkForeground = 0
-        var saturationTotal = 0f
-        val darkBins = BooleanArray(512)
+    private fun shouldLiftCentralGlyph(source: Bitmap, background: Int): Boolean {
+        var totalOpaque = 0
+        var candidate = 0
+        var centerCandidate = 0
+        var saturationSum = 0f
         val hsv = FloatArray(3)
 
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val c = source.getPixel(x, y)
-                if (Color.alpha(c) <= 32) continue
-                opaque++
+        val cx0 = (source.width * 0.22f).roundToInt()
+        val cx1 = (source.width * 0.78f).roundToInt()
+        val cy0 = (source.height * 0.22f).roundToInt()
+        val cy1 = (source.height * 0.78f).roundToInt()
 
-                val distance = BitmapUtils.colorDistance(c, background)
-                val lum = BitmapUtils.luminance(c)
+        for (y in 0 until source.height step 2) {
+            for (x in 0 until source.width step 2) {
+                val color = source.getPixel(x, y)
+                if (Color.alpha(color) <= 32) continue
 
-                if (distance > 76f && lum < 0.22f) {
-                    val index = y * width + x
-                    mask[index] = true
-                    darkForeground++
+                totalOpaque++
 
-                    Color.colorToHSV(c, hsv)
-                    saturationTotal += hsv[1]
+                val distance = BitmapUtils.colorDistance(color, background)
+                val luminance = BitmapUtils.luminance(color)
 
-                    val r = Color.red(c) shr 5
-                    val g = Color.green(c) shr 5
-                    val b = Color.blue(c) shr 5
-                    darkBins[(r shl 6) or (g shl 3) or b] = true
+                if (distance > 70f && luminance < 0.22f) {
+                    candidate++
+                    Color.colorToHSV(color, hsv)
+                    saturationSum += hsv[1]
+
+                    if (x in cx0..cx1 && y in cy0..cy1) {
+                        centerCandidate++
+                    }
                 }
             }
         }
 
-        if (opaque == 0 || darkForeground == 0) return false
+        if (totalOpaque == 0 || candidate == 0) return false
 
-        var boundaryPixels = 0
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val index = y * width + x
-                if (!mask[index]) continue
+        val coverage = candidate.toFloat() / totalOpaque
+        val centerRatio = centerCandidate.toFloat() / candidate
+        val averageSaturation = saturationSum / candidate
 
-                val left = x == 0 || !mask[index - 1]
-                val right = x == width - 1 || !mask[index + 1]
-                val top = y == 0 || !mask[index - width]
-                val bottom = y == height - 1 || !mask[index + width]
-
-                if (left || right || top || bottom) boundaryPixels++
-            }
-        }
-
-        val coverage = darkForeground.toFloat() / opaque
-        val averageSaturation = saturationTotal / darkForeground
-        val bins = darkBins.count { it }
-        val boundaryRatio = boundaryPixels.toFloat() / darkForeground
-
-        // Only invert thin, glyph-like, mostly monochrome dark marks.
-        // Solid controls/lenses have a much lower boundary/area ratio and remain
-        // exactly as authored.
-        return coverage <= 0.24f &&
-            averageSaturation <= 0.22f &&
-            bins <= 12 &&
-            boundaryRatio >= 0.20f
+        // Dark text/logos such as Calendar numbers and the ChatGPT mark are
+        // compact, central and mostly neutral. Large dark controls/lenses are
+        // rejected by the coverage/centrality constraints and stay untouched.
+        return coverage in 0.03f..0.22f &&
+            centerRatio >= 0.60f &&
+            averageSaturation <= 0.22f
     }
 
     private fun deriveDarkVariant(original: Int): Int {
         val hsv = FloatArray(3)
         Color.colorToHSV(original, hsv)
 
-        if (hsv[1] < 0.11f) {
-            return DARK_NEUTRAL
+        val hue = hsv[0]
+        val saturation = hsv[1]
+        val value = hsv[2]
+
+        if (saturation < 0.10f) {
+            return Color.rgb(24, 24, 28)
         }
 
-        hsv[1] = (hsv[1] * 0.96f + 0.02f).coerceIn(0.22f, 1f)
-        hsv[2] = 0.13f
+        val isWarm = hue < 28f || hue >= 300f
+
+        hsv[1] = if (isWarm) {
+            (saturation * 0.98f).coerceIn(0.55f, 1f)
+        } else {
+            (saturation * 0.95f).coerceIn(0.28f, 1f)
+        }
+
+        hsv[2] = if (isWarm) {
+            (0.15f + value * 0.03f).coerceIn(0.14f, 0.19f)
+        } else {
+            (0.12f + value * 0.025f).coerceIn(0.11f, 0.16f)
+        }
+
         return Color.HSVToColor(255, hsv)
     }
 
