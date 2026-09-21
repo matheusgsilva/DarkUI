@@ -512,15 +512,15 @@ class DarkIconEngineTest {
 
         assertTrue(
             "large dark control should stay dark",
-            BitmapUtils.luminance(result.getPixel(92, 128)) < 0.16f
+            BitmapUtils.luminance(result.getPixel(92, 100)) < 0.16f
         )
         assertTrue(
             "second large dark control should stay dark",
-            BitmapUtils.luminance(result.getPixel(164, 128)) < 0.16f
+            BitmapUtils.luminance(result.getPixel(164, 100)) < 0.16f
         )
         assertTrue(
             "white symbol should remain bright",
-            BitmapUtils.luminance(result.getPixel(92, 128)) < 0.16f
+            BitmapUtils.luminance(result.getPixel(92, 128)) > 0.70f
         )
     }
 
