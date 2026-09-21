@@ -525,6 +525,43 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun thinDarkGlyphInvertsButSolidDarkDiscDoesNot() {
+        val glyphBitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val glyphCanvas = Canvas(glyphBitmap)
+        glyphCanvas.drawColor(Color.WHITE)
+
+        val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 10f
+        }
+        glyphCanvas.drawCircle(128f, 128f, 52f, glyphPaint)
+        glyphCanvas.drawLine(102f, 128f, 154f, 128f, glyphPaint)
+
+        val glyphResult = engine.generate(BitmapDrawable(resources, glyphBitmap)).bitmap
+        assertTrue(
+            "thin glyph should invert",
+            BitmapUtils.luminance(glyphResult.getPixel(128, 76)) > 0.45f
+        )
+
+        val solidBitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val solidCanvas = Canvas(solidBitmap)
+        solidCanvas.drawColor(Color.WHITE)
+
+        val solidPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(30, 30, 34)
+            style = Paint.Style.FILL
+        }
+        solidCanvas.drawCircle(128f, 128f, 58f, solidPaint)
+
+        val solidResult = engine.generate(BitmapDrawable(resources, solidBitmap)).bitmap
+        assertTrue(
+            "solid dark disc must stay dark",
+            BitmapUtils.luminance(solidResult.getPixel(128, 128)) < 0.16f
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
