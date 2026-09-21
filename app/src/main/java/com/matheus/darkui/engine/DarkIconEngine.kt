@@ -420,8 +420,11 @@ class DarkIconEngine(private val size: Int = 256) {
 
     private fun improveForegroundPixel(color: Int): Int {
         val lum = BitmapUtils.luminance(color)
-        if (lum >= 0.07f) return color
-        return mixWithWhite(color, 0.22f)
+        return when {
+            lum < 0.07f -> mixWithWhite(color, 0.55f)
+            lum < 0.14f -> mixWithWhite(color, 0.30f)
+            else -> color
+        }
     }
 
     private fun mixWithWhite(color: Int, amount: Float): Int {
