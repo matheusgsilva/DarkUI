@@ -46,7 +46,13 @@ jobs:
           import re
           import zipfile
 
-          apk = "iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+          import glob
+
+          matches = sorted(glob.glob("iconpacktemplate/build/outputs/apk/release/**/*.apk", recursive=True))
+          assert matches, "no template APK found under iconpacktemplate/build/outputs/apk/release"
+          apk = next((p for p in matches if "unsigned" in p.lower()), matches[0])
+          print("Using template APK:", apk)
+
           slot = re.compile(r"^res/.*/icon_\d{4}\.png$")
 
           with zipfile.ZipFile(apk) as z:
@@ -77,8 +83,10 @@ jobs:
         shell: bash
         run: |
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          APK="iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
-          "$AAPT2" dump resources "$APK" | grep -m 40 -E "icon_[0-9]{4}|drawable" || true
+          APK="$(find iconpacktemplate/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
+          if [ -n "$APK" ]; then
+            "$AAPT2" dump resources "$APK" | grep -m 40 -E "icon_[0-9]{4}|drawable" || true
+          fi
 
       - name: Build debug and release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
@@ -87,11 +95,15 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import glob
           import hashlib
           import zipfile
 
           app_apk = "app/build/outputs/apk/debug/app-debug.apk"
-          template_apk = "iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+          matches = sorted(glob.glob("iconpacktemplate/build/outputs/apk/release/**/*.apk", recursive=True))
+          assert matches, "no template APK found under iconpacktemplate/build/outputs/apk/release"
+          template_apk = next((p for p in matches if "unsigned" in p.lower()), matches[0])
+          print("Using template APK:", template_apk)
 
           with open(template_apk, "rb") as f:
               expected = f.read()
