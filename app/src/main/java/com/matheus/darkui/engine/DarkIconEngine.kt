@@ -302,10 +302,10 @@ class DarkIconEngine(private val size: Int = 256) {
         }
 
         return Color.argb(
-            channel(Color::alpha),
-            channel(Color::red),
-            channel(Color::green),
-            channel(Color::blue)
+            channel { Color.alpha(it) },
+            channel { Color.red(it) },
+            channel { Color.green(it) },
+            channel { Color.blue(it) }
         )
     }
 
