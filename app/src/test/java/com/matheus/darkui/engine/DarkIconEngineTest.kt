@@ -180,6 +180,39 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun detailedNonGameArtworkIsNotFlattenedIntoBrandBackground() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint()
+
+        val cell = 16
+        for (y in 0 until 256 step cell) {
+            for (x in 0 until 256 step cell) {
+                val even = ((x / cell) + (y / cell)) % 2 == 0
+                paint.color = if (even) {
+                    Color.rgb(235, 70, 55)
+                } else {
+                    Color.rgb(40, 105, 230)
+                }
+                canvas.drawRect(
+                    x.toFloat(),
+                    y.toFloat(),
+                    (x + cell).toFloat(),
+                    (y + cell).toFloat(),
+                    paint
+                )
+            }
+        }
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap), isGame = false)
+
+        val a = result.bitmap.getPixel(48, 48)
+        val b = result.bitmap.getPixel(64, 48)
+        assertTrue("detailed artwork should retain distinct regions", BitmapUtils.colorDistance(a, b) > 60f)
+        assertTrue("detailed artwork should use preservation path", result.method.contains("preservada"))
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
