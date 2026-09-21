@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 15
+        const val ENGINE_VERSION = 16
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -286,7 +286,7 @@ class DarkIconEngine(private val size: Int = 256) {
         }
 
         val target = deriveDarkVariant(background)
-        val allowForegroundLift = shouldLiftCentralGlyph(source, background)
+        val liftMask = buildLiftMask(source, background)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -301,7 +301,7 @@ class DarkIconEngine(private val size: Int = 256) {
 
             pixels[i] = if (backgroundWeight > 0.025f) {
                 blend(c, target, backgroundWeight * 0.95f)
-            } else if (allowForegroundLift) {
+            } else if (liftMask[i]) {
                 improveForegroundPixel(c)
             } else {
                 c
@@ -380,7 +380,7 @@ class DarkIconEngine(private val size: Int = 256) {
 
     private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
         val target = deriveDarkVariant(dominantColor)
-        val allowForegroundLift = shouldLiftCentralGlyph(source, dominantColor)
+        val liftMask = buildLiftMask(source, dominantColor)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -394,7 +394,7 @@ class DarkIconEngine(private val size: Int = 256) {
 
             pixels[i] = if (weight > 0.03f) {
                 blend(c, target, weight * 0.95f)
-            } else if (allowForegroundLift) {
+            } else if (liftMask[i]) {
                 improveForegroundPixel(c)
             } else {
                 c
@@ -405,52 +405,106 @@ class DarkIconEngine(private val size: Int = 256) {
         return out
     }
 
-    private fun shouldLiftCentralGlyph(source: Bitmap, background: Int): Boolean {
-        var totalOpaque = 0
-        var candidate = 0
-        var centerCandidate = 0
-        var saturationSum = 0f
+    private fun buildLiftMask(source: Bitmap, background: Int): BooleanArray {
+        val width = source.width
+        val height = source.height
+        val candidate = BooleanArray(width * height)
+        val output = BooleanArray(width * height)
+        var opaquePixels = 0
+
         val hsv = FloatArray(3)
-
-        val cx0 = (source.width * 0.22f).roundToInt()
-        val cx1 = (source.width * 0.78f).roundToInt()
-        val cy0 = (source.height * 0.22f).roundToInt()
-        val cy1 = (source.height * 0.78f).roundToInt()
-
-        for (y in 0 until source.height step 2) {
-            for (x in 0 until source.width step 2) {
+        for (y in 0 until height) {
+            for (x in 0 until width) {
                 val color = source.getPixel(x, y)
                 if (Color.alpha(color) <= 32) continue
-
-                totalOpaque++
+                opaquePixels++
 
                 val distance = BitmapUtils.colorDistance(color, background)
                 val luminance = BitmapUtils.luminance(color)
+                Color.colorToHSV(color, hsv)
 
-                if (distance > 70f && luminance < 0.22f) {
-                    candidate++
-                    Color.colorToHSV(color, hsv)
-                    saturationSum += hsv[1]
-
-                    if (x in cx0..cx1 && y in cy0..cy1) {
-                        centerCandidate++
-                    }
+                if (
+                    distance > 60f &&
+                    luminance < 0.28f &&
+                    hsv[1] <= 0.30f
+                ) {
+                    candidate[y * width + x] = true
                 }
             }
         }
 
-        if (totalOpaque == 0 || candidate == 0) return false
+        if (opaquePixels == 0) return output
 
-        val coverage = candidate.toFloat() / totalOpaque
-        val centerRatio = centerCandidate.toFloat() / candidate
-        val averageSaturation = saturationSum / candidate
+        val visited = BooleanArray(candidate.size)
+        val queue = IntArray(candidate.size)
 
-        // Dark text/logos such as Calendar numbers and the ChatGPT mark are
-        // compact, central and mostly neutral. Large dark controls/lenses are
-        // rejected by the coverage/centrality constraints and stay untouched.
-        return coverage in 0.03f..0.22f &&
-            centerRatio >= 0.60f &&
-            averageSaturation <= 0.22f
+        for (startIndex in candidate.indices) {
+            if (!candidate[startIndex] || visited[startIndex]) continue
+
+            var head = 0
+            var tail = 0
+            queue[tail++] = startIndex
+            visited[startIndex] = true
+
+            val component = ArrayList<Int>()
+            var minX = width
+            var minY = height
+            var maxX = -1
+            var maxY = -1
+            var sumX = 0L
+            var sumY = 0L
+
+            while (head < tail) {
+                val index = queue[head++]
+                component += index
+
+                val x = index % width
+                val y = index / width
+                minX = minOf(minX, x)
+                minY = minOf(minY, y)
+                maxX = maxOf(maxX, x)
+                maxY = maxOf(maxY, y)
+                sumX += x
+                sumY += y
+
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        if (dx == 0 && dy == 0) continue
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) continue
+
+                        val next = ny * width + nx
+                        if (candidate[next] && !visited[next]) {
+                            visited[next] = true
+                            queue[tail++] = next
+                        }
+                    }
+                }
+            }
+
+            val area = component.size
+            val coverage = area.toFloat() / opaquePixels
+            val boxWidth = (maxX - minX + 1).coerceAtLeast(1)
+            val boxHeight = (maxY - minY + 1).coerceAtLeast(1)
+            val fillRatio = area.toFloat() / (boxWidth * boxHeight)
+            val centerX = sumX.toFloat() / area
+            val centerY = sumY.toFloat() / area
+            val central =
+                centerX in (width * 0.18f)..(width * 0.82f) &&
+                    centerY in (height * 0.18f)..(height * 0.82f)
+
+            val glyphLike =
+                coverage in 0.006f..0.20f &&
+                    fillRatio <= 0.58f &&
+                    central
+
+            if (glyphLike) {
+                component.forEach { output[it] = true }
+            }
+        }
+
+        return output
     }
 
     private fun deriveDarkVariant(original: Int): Int {
