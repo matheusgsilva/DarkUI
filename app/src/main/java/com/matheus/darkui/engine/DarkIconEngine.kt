@@ -26,7 +26,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 7
+        const val ENGINE_VERSION = 8
 
         private const val DARK_SURFACE = 0xFF171719.toInt()
         private const val DARK_NEUTRAL = 0xFF151517.toInt()
@@ -80,6 +80,24 @@ class DarkIconEngine(private val size: Int = 256) {
                 bitmap = renderOneUiFrame(recolored),
                 method = "Dark automático • fundo convertido",
                 confidence = segmentationConfidence(analysis)
+            )
+        }
+
+        // Smooth, full-bleed brand gradients (for example many social/media icons)
+        // are not uniform enough for the flat-background branch above. Estimate
+        // their background from the four corners and only darken pixels that fit
+        // that smooth surface, keeping logo strokes and glyphs intact.
+        if (
+            !analysis.isAlreadyDark &&
+            analysis.opaqueCoverage >= 0.92f &&
+            analysis.edgeOpaqueRatio >= 0.85f &&
+            analysis.detail <= 0.18f
+        ) {
+            val recolored = recolorSmoothFullBleedBackground(source)
+            return SmartIconResult(
+                bitmap = renderOneUiFrame(recolored),
+                method = "Dark automático • gradiente convertido",
+                confidence = 0.92f
             )
         }
 
@@ -225,6 +243,70 @@ class DarkIconEngine(private val size: Int = 256) {
 
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
+    }
+
+    private fun recolorSmoothFullBleedBackground(source: Bitmap): Bitmap {
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        val left = 2.coerceAtMost(out.width - 1)
+        val top = 2.coerceAtMost(out.height - 1)
+        val right = (out.width - 3).coerceAtLeast(0)
+        val bottom = (out.height - 3).coerceAtLeast(0)
+
+        val c00 = out.getPixel(left, top)
+        val c10 = out.getPixel(right, top)
+        val c01 = out.getPixel(left, bottom)
+        val c11 = out.getPixel(right, bottom)
+
+        for (y in 0 until out.height) {
+            val ty = if (out.height <= 1) 0f else y / (out.height - 1f)
+            for (x in 0 until out.width) {
+                val index = y * out.width + x
+                val c = pixels[index]
+                if (Color.alpha(c) < 8) continue
+
+                val tx = if (out.width <= 1) 0f else x / (out.width - 1f)
+                val expected = bilinearColor(c00, c10, c01, c11, tx, ty)
+                val distance = BitmapUtils.colorDistance(c, expected)
+                val backgroundWeight = 1f - BitmapUtils.smoothStep(34f, 92f, distance)
+
+                pixels[index] = if (backgroundWeight > 0.04f) {
+                    val target = deriveDarkVariant(expected)
+                    blend(c, target, backgroundWeight * 0.96f)
+                } else {
+                    improveForegroundPixel(c)
+                }
+            }
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
+    }
+
+    private fun bilinearColor(
+        c00: Int,
+        c10: Int,
+        c01: Int,
+        c11: Int,
+        tx: Float,
+        ty: Float
+    ): Int {
+        fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+        fun channel(selector: (Int) -> Int): Int {
+            val topValue = lerp(selector(c00).toFloat(), selector(c10).toFloat(), tx)
+            val bottomValue = lerp(selector(c01).toFloat(), selector(c11).toFloat(), tx)
+            return lerp(topValue, bottomValue, ty).roundToInt().coerceIn(0, 255)
+        }
+
+        return Color.argb(
+            channel(Color::alpha),
+            channel(Color::red),
+            channel(Color::green),
+            channel(Color::blue)
+        )
     }
 
     private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
