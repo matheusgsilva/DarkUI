@@ -4,8 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import com.matheus.darkui.model.SmartIconResult
@@ -26,10 +24,9 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 8
+        const val ENGINE_VERSION = 9
 
-        private const val DARK_SURFACE = 0xFF171719.toInt()
-        private const val DARK_NEUTRAL = 0xFF151517.toInt()
+                private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
         private const val SEGMENT_EDGE_UNIFORMITY_MAX = 42f
         private const val SEGMENT_MIN_BACKGROUND_COVERAGE = 0.24f
@@ -77,7 +74,7 @@ class DarkIconEngine(private val size: Int = 256) {
         if (analysis.shouldSegment) {
             val recolored = recolorBackgroundLikePixels(source, analysis.edgeMean)
             return SmartIconResult(
-                bitmap = renderOneUiFrame(recolored),
+                bitmap = recolored,
                 method = "Dark automático • fundo convertido",
                 confidence = segmentationConfidence(analysis)
             )
@@ -95,7 +92,7 @@ class DarkIconEngine(private val size: Int = 256) {
         ) {
             val recolored = recolorSmoothFullBleedBackground(source)
             return SmartIconResult(
-                bitmap = renderOneUiFrame(recolored),
+                bitmap = recolored,
                 method = "Dark automático • gradiente convertido",
                 confidence = 0.92f
             )
@@ -104,7 +101,7 @@ class DarkIconEngine(private val size: Int = 256) {
         if (analysis.edgeOpaqueRatio < 0.45f) {
             val foreground = liftTransparentForeground(source)
             return SmartIconResult(
-                bitmap = renderOneUiFrame(foreground),
+                bitmap = foreground,
                 method = "Dark automático • símbolo preservado",
                 confidence = 0.94f
             )
@@ -117,7 +114,7 @@ class DarkIconEngine(private val size: Int = 256) {
         ) {
             val recolored = recolorDominantRegion(source, analysis.dominantColor)
             return SmartIconResult(
-                bitmap = renderOneUiFrame(recolored),
+                bitmap = recolored,
                 method = "Dark automático • cor dominante convertida",
                 confidence = 0.88f
             )
@@ -172,7 +169,7 @@ class DarkIconEngine(private val size: Int = 256) {
         canvas.drawBitmap(darkForeground, 0f, 0f, paint)
 
         return SmartIconResult(
-            bitmap = renderOneUiFrame(composite),
+            bitmap = composite,
             method = "Dark automático • adaptive em camadas",
             confidence = 0.99f
         )
@@ -207,10 +204,10 @@ class DarkIconEngine(private val size: Int = 256) {
 
             if (hsv[1] < 0.10f) {
                 hsv[1] = 0f
-                hsv[2] = (0.09f + originalValue * 0.08f).coerceIn(0.09f, 0.17f)
+                hsv[2] = (0.055f + originalValue * 0.045f).coerceIn(0.055f, 0.11f)
             } else {
-                hsv[1] = (hsv[1] * 0.94f + 0.03f).coerceIn(0f, 1f)
-                hsv[2] = (0.10f + originalValue * 0.16f).coerceIn(0.11f, 0.26f)
+                hsv[1] = (hsv[1] * 0.96f + 0.02f).coerceIn(0f, 1f)
+                hsv[2] = (0.065f + originalValue * 0.075f).coerceIn(0.07f, 0.15f)
             }
 
             pixels[i] = Color.HSVToColor(alpha, hsv)
@@ -341,8 +338,8 @@ class DarkIconEngine(private val size: Int = 256) {
             return DARK_NEUTRAL
         }
 
-        hsv[1] = (hsv[1] * 0.94f + 0.03f).coerceIn(0.22f, 1f)
-        hsv[2] = 0.20f
+        hsv[1] = (hsv[1] * 0.96f + 0.02f).coerceIn(0.22f, 1f)
+        hsv[2] = 0.13f
         return Color.HSVToColor(255, hsv)
     }
 
@@ -355,7 +352,7 @@ class DarkIconEngine(private val size: Int = 256) {
     ): SmartIconResult {
         val actualFactor = if (analysis.isAlreadyDark) maxOf(factor, 0.94f) else factor
         return SmartIconResult(
-            bitmap = renderOneUiFrame(dimArtwork(source, actualFactor)),
+            bitmap = dimArtwork(source, actualFactor),
             method = method,
             confidence = confidence
         )
@@ -421,8 +418,12 @@ class DarkIconEngine(private val size: Int = 256) {
     private fun improveForegroundPixel(color: Int): Int {
         val lum = BitmapUtils.luminance(color)
         return when {
-            lum < 0.07f -> mixWithWhite(color, 0.55f)
-            lum < 0.14f -> mixWithWhite(color, 0.30f)
+            // iOS-like dark treatment: when a dark monochrome glyph would disappear
+            // on the generated dark background, invert its visual role while keeping
+            // the exact same pixels, alpha, position and geometry.
+            lum < 0.07f -> mixWithWhite(color, 0.86f)
+            lum < 0.14f -> mixWithWhite(color, 0.68f)
+            lum < 0.22f -> mixWithWhite(color, 0.42f)
             else -> color
         }
     }
@@ -435,34 +436,6 @@ class DarkIconEngine(private val size: Int = 256) {
             (Color.green(color) + (255 - Color.green(color)) * t).roundToInt().coerceIn(0, 255),
             (Color.blue(color) + (255 - Color.blue(color)) * t).roundToInt().coerceIn(0, 255)
         )
-    }
-
-    private fun renderOneUiFrame(content: Bitmap): Bitmap {
-        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        val pad = size * 0.018f
-        val rect = RectF(pad, pad, size - pad, size - pad)
-        val radius = size * 0.235f
-
-        paint.color = DARK_SURFACE
-        canvas.drawRoundRect(rect, radius, radius, paint)
-
-        val clip = Path().apply {
-            addRoundRect(rect, radius, radius, Path.Direction.CW)
-        }
-
-        canvas.save()
-        canvas.clipPath(clip)
-        canvas.drawBitmap(content, null, rect, paint)
-        canvas.restore()
-
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = size * 0.006f
-        paint.color = Color.argb(18, 255, 255, 255)
-        canvas.drawRoundRect(rect, radius, radius, paint)
-
-        return out
     }
 
     private fun analyze(bitmap: Bitmap): IconAnalysis {
