@@ -27,7 +27,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 4
+        const val ENGINE_VERSION = 5
 
         private const val DARK_BG = 0xFF17171A.toInt()
         private const val AMOLED_BG = Color.BLACK
@@ -53,15 +53,8 @@ class DarkIconEngine(private val size: Int = 256) {
     )
 
     fun generate(drawable: Drawable, style: IconStyle, isGame: Boolean = false): SmartIconResult {
-        if (style == IconStyle.TINTED && drawable is AdaptiveIconDrawable && Build.VERSION.SDK_INT >= 33) {
-            drawable.monochrome?.let { monochrome ->
-                val mask = BitmapUtils.drawableToBitmap(monochrome, size)
-                return SmartIconResult(
-                    bitmap = renderTintedMask(mask),
-                    method = "iOS-style • monochrome",
-                    confidence = 1f
-                )
-            }
+        if (drawable is AdaptiveIconDrawable && !isGame) {
+            return generateAdaptive(drawable, style)
         }
 
         val source = BitmapUtils.drawableToBitmap(drawable, size)
@@ -106,6 +99,85 @@ class DarkIconEngine(private val size: Int = 256) {
             method = "iOS-style • artwork fallback",
             confidence = (0.72f + (1f - analysis.detail) * 0.12f).coerceIn(0.72f, 0.84f)
         )
+    }
+
+    private fun generateAdaptive(icon: AdaptiveIconDrawable, style: IconStyle): SmartIconResult {
+        if (style == IconStyle.TINTED && Build.VERSION.SDK_INT >= 33) {
+            icon.monochrome?.let { monochrome ->
+                val mask = BitmapUtils.drawableToBitmap(monochrome, size)
+                return SmartIconResult(
+                    bitmap = renderTintedMask(mask),
+                    method = "iOS-style • adaptive monochrome",
+                    confidence = 1f
+                )
+            }
+        }
+
+        val foreground = BitmapUtils.drawableToBitmap(icon.foreground, size)
+
+        if (style == IconStyle.TINTED) {
+            return SmartIconResult(
+                bitmap = renderTintedMask(foreground, deriveFromLuminance = true),
+                method = "iOS-style • adaptive tint",
+                confidence = 0.96f
+            )
+        }
+
+        val background = BitmapUtils.drawableToBitmap(icon.background, size)
+        val transformedBackground = transformAdaptiveBackground(background, style)
+        val correctedForeground = improveForegroundForDark(foreground, conservative = false)
+
+        val composite = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(composite)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(transformedBackground, 0f, 0f, paint)
+        canvas.drawBitmap(correctedForeground, 0f, 0f, paint)
+
+        return SmartIconResult(
+            bitmap = renderOneUiFrame(composite, backgroundFor(style)),
+            method = if (style == IconStyle.AMOLED) {
+                "iOS-style • adaptive AMOLED"
+            } else {
+                "iOS-style • adaptive dark"
+            },
+            confidence = 0.99f
+        )
+    }
+
+    private fun transformAdaptiveBackground(source: Bitmap, style: IconStyle): Bitmap {
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        val hsv = FloatArray(3)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val alpha = Color.alpha(c)
+            if (alpha == 0) continue
+
+            Color.colorToHSV(c, hsv)
+            val originalValue = hsv[2]
+
+            when (style) {
+                IconStyle.DARK -> {
+                    hsv[1] = when {
+                        hsv[1] < 0.08f -> 0f
+                        else -> (hsv[1] * 0.92f + 0.04f).coerceIn(0f, 1f)
+                    }
+                    hsv[2] = (0.08f + originalValue * 0.20f).coerceIn(0.08f, 0.28f)
+                }
+                IconStyle.AMOLED -> {
+                    hsv[1] = (hsv[1] * 0.72f).coerceIn(0f, 1f)
+                    hsv[2] = (originalValue * 0.075f).coerceIn(0f, 0.075f)
+                }
+                IconStyle.TINTED -> Unit
+            }
+
+            pixels[i] = Color.HSVToColor(alpha, hsv)
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
     }
 
     private fun generateTinted(source: Bitmap, analysis: IconAnalysis): SmartIconResult {
