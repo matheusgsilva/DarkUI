@@ -8,37 +8,34 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
-import android.os.Build
-import com.matheus.darkui.model.IconStyle
 import com.matheus.darkui.model.SmartIconResult
 import com.matheus.darkui.util.BitmapUtils
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Dark icon renderer inspired by the automatic iOS 18 treatment:
+ * Automatic dark-icon renderer.
  *
- * 1. Analyze the complete icon and its edge/background statistics.
- * 2. Recolor the background only when segmentation confidence is high.
- * 3. Preserve complex/illustrative artwork and only dim it when segmentation is unsafe.
- * 4. Keep every result inside one consistent One UI-style rounded frame.
+ * The strategy follows the behavior Apple documents for generated icon appearances:
+ * preserve the icon's core visual features and legibility, generate a dark appearance
+ * automatically when the developer did not supply one, and avoid destructive
+ * transformations on detailed artwork.
  *
- * This is deliberately deterministic and local: no ML model and no network are required.
+ * Android gives us one extra advantage for AdaptiveIconDrawable: foreground and
+ * background layers can be transformed independently.
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 5
+        const val ENGINE_VERSION = 7
 
-        private const val DARK_BG = 0xFF17171A.toInt()
-        private const val AMOLED_BG = Color.BLACK
-        private const val TINT_BG = 0xFF17171A.toInt()
-        private const val TINT_FG = 0xFFE5E5EA.toInt()
+        private const val DARK_SURFACE = 0xFF171719.toInt()
+        private const val DARK_NEUTRAL = 0xFF151517.toInt()
 
-        private const val SEGMENT_EDGE_UNIFORMITY_MAX = 36f
-        private const val SEGMENT_MIN_BACKGROUND_COVERAGE = 0.28f
-        private const val SEGMENT_MAX_BACKGROUND_COVERAGE = 0.91f
-        private const val SEGMENT_MAX_COLOR_BINS = 48
-        private const val SEGMENT_MAX_DETAIL = 0.42f
+        private const val SEGMENT_EDGE_UNIFORMITY_MAX = 42f
+        private const val SEGMENT_MIN_BACKGROUND_COVERAGE = 0.24f
+        private const val SEGMENT_MAX_BACKGROUND_COVERAGE = 0.94f
+        private const val SEGMENT_MAX_COLOR_BINS = 88
+        private const val SEGMENT_MAX_DETAIL = 0.34f
     }
 
     private data class IconAnalysis(
@@ -46,110 +43,142 @@ class DarkIconEngine(private val size: Int = 256) {
         val edgeOpaqueRatio: Float,
         val edgeUniformity: Float,
         val backgroundCoverage: Float,
+        val opaqueCoverage: Float,
+        val dominantColor: Int,
+        val dominantRatio: Float,
+        val dominantCanvasCoverage: Float,
         val colorBins: Int,
         val detail: Float,
-        val segmentConfidence: Float,
+        val averageLuminance: Float,
         val shouldSegment: Boolean
-    )
+    ) {
+        val isAlreadyDark: Boolean
+            get() = averageLuminance < 0.16f
+    }
 
-    fun generate(drawable: Drawable, style: IconStyle, isGame: Boolean = false): SmartIconResult {
+    fun generate(drawable: Drawable, isGame: Boolean = false): SmartIconResult {
         if (drawable is AdaptiveIconDrawable && !isGame) {
-            return generateAdaptive(drawable, style)
+            return generateAdaptive(drawable)
         }
 
         val source = BitmapUtils.drawableToBitmap(drawable, size)
         val analysis = analyze(source)
 
-        if (style == IconStyle.TINTED) {
-            return generateTinted(source, analysis)
-        }
-
         if (isGame) {
             return preserveArtwork(
                 source = source,
-                style = style,
-                strongerDim = true,
-                method = "iOS-style • game artwork",
-                confidence = 0.98f
+                analysis = analysis,
+                factor = 0.74f,
+                method = "Dark automático • jogo preservado",
+                confidence = 0.99f
             )
         }
 
         if (analysis.shouldSegment) {
-            val recolored = recolorFlatBackground(source, analysis.edgeMean, style)
+            val recolored = recolorBackgroundLikePixels(source, analysis.edgeMean)
             return SmartIconResult(
-                bitmap = renderOneUiFrame(recolored, backgroundFor(style)),
-                method = "iOS-style • segmented",
-                confidence = analysis.segmentConfidence
+                bitmap = renderOneUiFrame(recolored),
+                method = "Dark automático • fundo convertido",
+                confidence = segmentationConfidence(analysis)
             )
         }
 
         if (analysis.edgeOpaqueRatio < 0.45f) {
-            val foreground = improveForegroundForDark(source, conservative = true)
+            val foreground = liftTransparentForeground(source)
             return SmartIconResult(
-                bitmap = renderOneUiFrame(foreground, backgroundFor(style)),
-                method = "iOS-style • transparent",
-                confidence = 0.90f
+                bitmap = renderOneUiFrame(foreground),
+                method = "Dark automático • símbolo preservado",
+                confidence = 0.94f
+            )
+        }
+
+        if (
+            analysis.dominantCanvasCoverage >= 0.28f &&
+            isUsefulBackgroundColor(analysis.dominantColor) &&
+            analysis.detail <= 0.38f
+        ) {
+            val recolored = recolorDominantRegion(source, analysis.dominantColor)
+            return SmartIconResult(
+                bitmap = renderOneUiFrame(recolored),
+                method = "Dark automático • cor dominante convertida",
+                confidence = 0.88f
+            )
+        }
+
+        if (analysis.isAlreadyDark) {
+            return preserveArtwork(
+                source = source,
+                analysis = analysis,
+                factor = 0.96f,
+                method = "Dark automático • já escuro",
+                confidence = 0.96f
             )
         }
 
         return preserveArtwork(
             source = source,
-            style = style,
-            strongerDim = false,
-            method = "iOS-style • artwork fallback",
-            confidence = (0.72f + (1f - analysis.detail) * 0.12f).coerceIn(0.72f, 0.84f)
+            analysis = analysis,
+            factor = 0.82f,
+            method = "Dark automático • arte preservada",
+            confidence = 0.82f
         )
     }
 
-    private fun generateAdaptive(icon: AdaptiveIconDrawable, style: IconStyle): SmartIconResult {
-        if (style == IconStyle.TINTED && Build.VERSION.SDK_INT >= 33) {
-            icon.monochrome?.let { monochrome ->
-                val mask = BitmapUtils.drawableToBitmap(monochrome, size)
-                return SmartIconResult(
-                    bitmap = renderTintedMask(mask),
-                    method = "iOS-style • adaptive monochrome",
-                    confidence = 1f
-                )
-            }
-        }
-
+    private fun generateAdaptive(icon: AdaptiveIconDrawable): SmartIconResult {
         val foreground = BitmapUtils.drawableToBitmap(icon.foreground, size)
+        val background = BitmapUtils.drawableToBitmap(icon.background, size)
+        val foregroundAnalysis = analyze(foreground)
 
-        if (style == IconStyle.TINTED) {
-            return SmartIconResult(
-                bitmap = renderTintedMask(foreground, deriveFromLuminance = true),
-                method = "iOS-style • adaptive tint",
-                confidence = 0.96f
+        if (
+            foregroundAnalysis.opaqueCoverage > 0.72f &&
+            foregroundAnalysis.detail > 0.18f
+        ) {
+            val complete = BitmapUtils.drawableToBitmap(icon, size)
+            val completeAnalysis = analyze(complete)
+            return preserveArtwork(
+                source = complete,
+                analysis = completeAnalysis,
+                factor = if (completeAnalysis.isAlreadyDark) 0.96f else 0.80f,
+                method = "Dark automático • adaptive complexo",
+                confidence = 0.90f
             )
         }
 
-        val background = BitmapUtils.drawableToBitmap(icon.background, size)
-        val transformedBackground = transformAdaptiveBackground(background, style)
-        val correctedForeground = improveForegroundForDark(foreground, conservative = false)
+        val darkBackground = darkenAdaptiveBackground(background)
+        val darkForeground = transformAdaptiveForeground(foreground, foregroundAnalysis)
 
         val composite = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(composite)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        canvas.drawBitmap(transformedBackground, 0f, 0f, paint)
-        canvas.drawBitmap(correctedForeground, 0f, 0f, paint)
+        canvas.drawBitmap(darkBackground, 0f, 0f, paint)
+        canvas.drawBitmap(darkForeground, 0f, 0f, paint)
 
         return SmartIconResult(
-            bitmap = renderOneUiFrame(composite, backgroundFor(style)),
-            method = if (style == IconStyle.AMOLED) {
-                "iOS-style • adaptive AMOLED"
-            } else {
-                "iOS-style • adaptive dark"
-            },
+            bitmap = renderOneUiFrame(composite),
+            method = "Dark automático • adaptive em camadas",
             confidence = 0.99f
         )
     }
 
-    private fun transformAdaptiveBackground(source: Bitmap, style: IconStyle): Bitmap {
+    private fun transformAdaptiveForeground(
+        source: Bitmap,
+        analysis: IconAnalysis
+    ): Bitmap {
+        if (
+            analysis.dominantCanvasCoverage >= 0.20f &&
+            isUsefulBackgroundColor(analysis.dominantColor)
+        ) {
+            return recolorDominantRegion(source, analysis.dominantColor)
+        }
+        return improveForegroundContrast(source)
+    }
+
+    private fun darkenAdaptiveBackground(source: Bitmap): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
-
         val hsv = FloatArray(3)
+
         for (i in pixels.indices) {
             val c = pixels[i]
             val alpha = Color.alpha(c)
@@ -158,19 +187,12 @@ class DarkIconEngine(private val size: Int = 256) {
             Color.colorToHSV(c, hsv)
             val originalValue = hsv[2]
 
-            when (style) {
-                IconStyle.DARK -> {
-                    hsv[1] = when {
-                        hsv[1] < 0.08f -> 0f
-                        else -> (hsv[1] * 0.92f + 0.04f).coerceIn(0f, 1f)
-                    }
-                    hsv[2] = (0.08f + originalValue * 0.20f).coerceIn(0.08f, 0.28f)
-                }
-                IconStyle.AMOLED -> {
-                    hsv[1] = (hsv[1] * 0.72f).coerceIn(0f, 1f)
-                    hsv[2] = (originalValue * 0.075f).coerceIn(0f, 0.075f)
-                }
-                IconStyle.TINTED -> Unit
+            if (hsv[1] < 0.10f) {
+                hsv[1] = 0f
+                hsv[2] = (0.09f + originalValue * 0.08f).coerceIn(0.09f, 0.17f)
+            } else {
+                hsv[1] = (hsv[1] * 0.94f + 0.03f).coerceIn(0f, 1f)
+                hsv[2] = (0.10f + originalValue * 0.16f).coerceIn(0.11f, 0.26f)
             }
 
             pixels[i] = Color.HSVToColor(alpha, hsv)
@@ -180,73 +202,24 @@ class DarkIconEngine(private val size: Int = 256) {
         return out
     }
 
-    private fun generateTinted(source: Bitmap, analysis: IconAnalysis): SmartIconResult {
-        val mask = if (analysis.shouldSegment) {
-            removeFlatBackground(source, analysis.edgeMean, tintMode = true)
-        } else {
-            source
-        }
-
-        return SmartIconResult(
-            bitmap = renderTintedMask(mask, deriveFromLuminance = !analysis.shouldSegment),
-            method = if (analysis.shouldSegment) {
-                "iOS-style • segmented tint"
-            } else {
-                "iOS-style • universal tint"
-            },
-            confidence = if (analysis.shouldSegment) analysis.segmentConfidence else 0.78f
-        )
-    }
-
-    /**
-     * The iOS-style fallback: never try to extract a logo from detailed artwork.
-     * Preserve the full composition and only reduce luminance before applying the
-     * common One UI frame.
-     */
-    private fun preserveArtwork(
-        source: Bitmap,
-        style: IconStyle,
-        strongerDim: Boolean,
-        method: String,
-        confidence: Float
-    ): SmartIconResult {
-        val factor = when {
-            style == IconStyle.AMOLED && strongerDim -> 0.64f
-            style == IconStyle.AMOLED -> 0.72f
-            strongerDim -> 0.74f
-            else -> 0.82f
-        }
-        val dimmed = dimArtwork(source, factor)
-        return SmartIconResult(
-            bitmap = renderOneUiFrame(dimmed, backgroundFor(style)),
-            method = method,
-            confidence = confidence
-        )
-    }
-
-    /**
-     * Recolors only pixels statistically close to the detected edge/background.
-     * Foreground geometry, color relationships, gradients and anti-aliasing stay in place.
-     */
-    private fun recolorFlatBackground(source: Bitmap, detectedBackground: Int, style: IconStyle): Bitmap {
-        val target = deriveDarkBackground(detectedBackground, style)
+    private fun recolorBackgroundLikePixels(source: Bitmap, background: Int): Bitmap {
+        val target = deriveDarkVariant(background)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
 
         for (i in pixels.indices) {
             val c = pixels[i]
-            val alpha = Color.alpha(c)
-            if (alpha < 8) continue
+            if (Color.alpha(c) < 8) continue
 
-            val distance = BitmapUtils.colorDistance(c, detectedBackground)
-            val foregroundWeight = BitmapUtils.smoothStep(20f, 72f, distance)
+            val distance = BitmapUtils.colorDistance(c, background)
+            val foregroundWeight = BitmapUtils.smoothStep(18f, 76f, distance)
             val backgroundWeight = 1f - foregroundWeight
 
-            pixels[i] = if (backgroundWeight > 0.03f) {
-                blend(c, target, backgroundWeight * 0.96f)
+            pixels[i] = if (backgroundWeight > 0.025f) {
+                blend(c, target, backgroundWeight * 0.97f)
             } else {
-                improveSingleForegroundPixel(c)
+                improveForegroundPixel(c)
             }
         }
 
@@ -254,33 +227,55 @@ class DarkIconEngine(private val size: Int = 256) {
         return out
     }
 
-    private fun deriveDarkBackground(original: Int, style: IconStyle): Int {
-        if (style == IconStyle.AMOLED) return AMOLED_BG
+    private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
+        val target = deriveDarkVariant(dominantColor)
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
 
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            if (Color.alpha(c) < 8) continue
+
+            val distance = BitmapUtils.colorDistance(c, dominantColor)
+            val weight = 1f - BitmapUtils.smoothStep(24f, 88f, distance)
+
+            pixels[i] = if (weight > 0.03f) {
+                blend(c, target, weight * 0.96f)
+            } else {
+                improveForegroundPixel(c)
+            }
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
+    }
+
+    private fun deriveDarkVariant(original: Int): Int {
         val hsv = FloatArray(3)
         Color.colorToHSV(original, hsv)
 
-        if (hsv[1] < 0.12f) {
-            return DARK_BG
+        if (hsv[1] < 0.11f) {
+            return DARK_NEUTRAL
         }
 
-        // Keep the original hue, similar to iOS dark variants of colored backgrounds,
-        // while moving the value into a dark range.
-        hsv[1] = (hsv[1] * 0.92f + 0.06f).coerceIn(0.30f, 0.92f)
+        hsv[1] = (hsv[1] * 0.94f + 0.03f).coerceIn(0.22f, 1f)
         hsv[2] = 0.20f
-        return Color.HSVToColor(Color.alpha(original).coerceAtLeast(255), hsv)
+        return Color.HSVToColor(255, hsv)
     }
 
-    private fun improveSingleForegroundPixel(color: Int): Int {
-        val lum = BitmapUtils.luminance(color)
-        if (lum >= 0.055f) return color
-
-        val amount = 0.16f
-        return Color.argb(
-            Color.alpha(color),
-            (Color.red(color) + (255 - Color.red(color)) * amount).roundToInt().coerceIn(0, 255),
-            (Color.green(color) + (255 - Color.green(color)) * amount).roundToInt().coerceIn(0, 255),
-            (Color.blue(color) + (255 - Color.blue(color)) * amount).roundToInt().coerceIn(0, 255)
+    private fun preserveArtwork(
+        source: Bitmap,
+        analysis: IconAnalysis,
+        factor: Float,
+        method: String,
+        confidence: Float
+    ): SmartIconResult {
+        val actualFactor = if (analysis.isAlreadyDark) maxOf(factor, 0.94f) else factor
+        return SmartIconResult(
+            bitmap = renderOneUiFrame(dimArtwork(source, actualFactor)),
+            method = method,
+            confidence = confidence
         )
     }
 
@@ -305,7 +300,59 @@ class DarkIconEngine(private val size: Int = 256) {
         return out
     }
 
-    private fun renderOneUiFrame(content: Bitmap, background: Int): Bitmap {
+    private fun improveForegroundContrast(source: Bitmap): Bitmap {
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            if (Color.alpha(c) < 8) continue
+            pixels[i] = improveForegroundPixel(c)
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
+    }
+
+    private fun liftTransparentForeground(source: Bitmap): Bitmap {
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            if (Color.alpha(c) < 8) continue
+
+            val lum = BitmapUtils.luminance(c)
+            pixels[i] = if (lum < 0.12f) {
+                mixWithWhite(c, 0.52f)
+            } else {
+                improveForegroundPixel(c)
+            }
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
+    }
+
+    private fun improveForegroundPixel(color: Int): Int {
+        val lum = BitmapUtils.luminance(color)
+        if (lum >= 0.07f) return color
+        return mixWithWhite(color, 0.22f)
+    }
+
+    private fun mixWithWhite(color: Int, amount: Float): Int {
+        val t = amount.coerceIn(0f, 1f)
+        return Color.argb(
+            Color.alpha(color),
+            (Color.red(color) + (255 - Color.red(color)) * t).roundToInt().coerceIn(0, 255),
+            (Color.green(color) + (255 - Color.green(color)) * t).roundToInt().coerceIn(0, 255),
+            (Color.blue(color) + (255 - Color.blue(color)) * t).roundToInt().coerceIn(0, 255)
+        )
+    }
+
+    private fun renderOneUiFrame(content: Bitmap): Bitmap {
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -313,7 +360,7 @@ class DarkIconEngine(private val size: Int = 256) {
         val rect = RectF(pad, pad, size - pad, size - pad)
         val radius = size * 0.235f
 
-        paint.color = background
+        paint.color = DARK_SURFACE
         canvas.drawRoundRect(rect, radius, radius, paint)
 
         val clip = Path().apply {
@@ -325,108 +372,10 @@ class DarkIconEngine(private val size: Int = 256) {
         canvas.drawBitmap(content, null, rect, paint)
         canvas.restore()
 
-        // Very subtle edge definition, close to the visual framing used by One UI.
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = size * 0.006f
         paint.color = Color.argb(18, 255, 255, 255)
         canvas.drawRoundRect(rect, radius, radius, paint)
-
-        return out
-    }
-
-    private fun removeFlatBackground(source: Bitmap, background: Int, tintMode: Boolean): Bitmap {
-        val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(source.width * source.height)
-        source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            val alpha = Color.alpha(c)
-            if (alpha == 0) continue
-
-            val distance = BitmapUtils.colorDistance(c, background)
-            val mask = BitmapUtils.smoothStep(18f, 68f, distance)
-            val newAlpha = (alpha * mask).roundToInt().coerceIn(0, 255)
-
-            pixels[i] = if (tintMode) {
-                Color.argb(newAlpha, 255, 255, 255)
-            } else {
-                Color.argb(newAlpha, Color.red(c), Color.green(c), Color.blue(c))
-            }
-        }
-
-        out.setPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-        return out
-    }
-
-    private fun improveForegroundForDark(source: Bitmap, conservative: Boolean): Bitmap {
-        val out = source.copy(Bitmap.Config.ARGB_8888, true)
-        val pixels = IntArray(out.width * out.height)
-        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
-
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            if (Color.alpha(c) < 12) continue
-
-            val lum = BitmapUtils.luminance(c)
-            if (lum < if (conservative) 0.045f else 0.14f) {
-                pixels[i] = if (conservative) {
-                    improveSingleForegroundPixel(c)
-                } else {
-                    BitmapUtils.lightenForDarkBackground(c)
-                }
-            }
-        }
-
-        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
-        return out
-    }
-
-    private fun renderTintedMask(maskSource: Bitmap, deriveFromLuminance: Boolean = false): Bitmap {
-        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = TINT_BG }
-        val pad = size * 0.018f
-        val rect = RectF(pad, pad, size - pad, size - pad)
-        val radius = size * 0.235f
-        canvas.drawRoundRect(rect, radius, radius, framePaint)
-
-        val overlay = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(size * size)
-        maskSource.getPixels(pixels, 0, size, 0, 0, size, size)
-
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            val baseAlpha = Color.alpha(c) / 255f
-            val strength = if (deriveFromLuminance) {
-                val lum = BitmapUtils.luminance(c)
-                (0.20f + lum * 0.80f).coerceIn(0f, 1f)
-            } else {
-                1f
-            }
-            val alpha = (255 * baseAlpha * strength).roundToInt().coerceIn(0, 255)
-            pixels[i] = Color.argb(
-                alpha,
-                Color.red(TINT_FG),
-                Color.green(TINT_FG),
-                Color.blue(TINT_FG)
-            )
-        }
-
-        overlay.setPixels(pixels, 0, size, 0, 0, size, size)
-
-        val clip = Path().apply {
-            addRoundRect(rect, radius, radius, Path.Direction.CW)
-        }
-        canvas.save()
-        canvas.clipPath(clip)
-        canvas.drawBitmap(
-            overlay,
-            null,
-            rect,
-            Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        )
-        canvas.restore()
 
         return out
     }
@@ -446,30 +395,37 @@ class DarkIconEngine(private val size: Int = 256) {
                 .toFloat()
         }
 
+        val bins = IntArray(512)
+        var totalSamples = 0
         var opaqueSamples = 0
         var backgroundSamples = 0
         var detailTotal = 0f
         var detailCount = 0
-        val colorBins = HashSet<Int>()
+        var luminanceTotal = 0f
 
         val step = 4
         var y = 0
         while (y < bitmap.height) {
             var x = 0
             while (x < bitmap.width) {
+                totalSamples++
                 val c = bitmap.getPixel(x, y)
+
                 if (Color.alpha(c) > 32) {
                     opaqueSamples++
+                    luminanceTotal += BitmapUtils.luminance(c)
 
-                    if (BitmapUtils.colorDistance(c, edgeMean) < 52f) {
+                    if (
+                        Color.alpha(edgeMean) > 0 &&
+                        BitmapUtils.colorDistance(c, edgeMean) < 54f
+                    ) {
                         backgroundSamples++
                     }
 
-                    val bin =
-                        ((Color.red(c) shr 5) shl 6) or
-                            ((Color.green(c) shr 5) shl 3) or
-                            (Color.blue(c) shr 5)
-                    colorBins += bin
+                    val r = Color.red(c) shr 5
+                    val g = Color.green(c) shr 5
+                    val b = Color.blue(c) shr 5
+                    bins[(r shl 6) or (g shl 3) or b]++
 
                     val nextX = (x + step).coerceAtMost(bitmap.width - 1)
                     val nextY = (y + step).coerceAtMost(bitmap.height - 1)
@@ -483,54 +439,94 @@ class DarkIconEngine(private val size: Int = 256) {
                         detailCount++
                     }
                 }
+
                 x += step
             }
             y += step
         }
 
-        val backgroundCoverage = if (opaqueSamples == 0) {
-            0f
-        } else {
-            backgroundSamples.toFloat() / opaqueSamples
-        }
+        val dominantIndex = bins.indices.maxByOrNull { bins[it] } ?: 0
+        val dominantCount = bins[dominantIndex]
+        val dominantColor = quantizedColor(dominantIndex)
 
-        val detail = if (detailCount == 0) 0f else (detailTotal / detailCount).coerceIn(0f, 1f)
+        val backgroundCoverage = if (opaqueSamples == 0) 0f
+        else backgroundSamples.toFloat() / opaqueSamples
+
+        val opaqueCoverage = if (totalSamples == 0) 0f
+        else opaqueSamples.toFloat() / totalSamples
+
+        val dominantRatio = if (opaqueSamples == 0) 0f
+        else dominantCount.toFloat() / opaqueSamples
+
+        val dominantCanvasCoverage = if (totalSamples == 0) 0f
+        else dominantCount.toFloat() / totalSamples
+
+        val averageLuminance = if (opaqueSamples == 0) 0f
+        else luminanceTotal / opaqueSamples
+
+        val detail = if (detailCount == 0) 0f
+        else (detailTotal / detailCount).coerceIn(0f, 1f)
+
+        val colorBins = bins.count { it > 0 }
 
         val shouldSegment =
             edgeOpaqueRatio >= 0.60f &&
                 edgeUniformity <= SEGMENT_EDGE_UNIFORMITY_MAX &&
                 backgroundCoverage in SEGMENT_MIN_BACKGROUND_COVERAGE..SEGMENT_MAX_BACKGROUND_COVERAGE &&
-                colorBins.size <= SEGMENT_MAX_COLOR_BINS &&
+                colorBins <= SEGMENT_MAX_COLOR_BINS &&
                 detail <= SEGMENT_MAX_DETAIL
-
-        val uniformityScore = (1f - edgeUniformity / SEGMENT_EDGE_UNIFORMITY_MAX).coerceIn(0f, 1f)
-        val coverageScore = (1f - abs(backgroundCoverage - 0.62f) / 0.62f).coerceIn(0f, 1f)
-        val complexityScore = (1f - colorBins.size / SEGMENT_MAX_COLOR_BINS.toFloat()).coerceIn(0f, 1f)
-
-        val confidence = (
-            0.72f +
-                uniformityScore * 0.11f +
-                coverageScore * 0.07f +
-                complexityScore * 0.06f
-            ).coerceIn(0.72f, 0.96f)
 
         return IconAnalysis(
             edgeMean = edgeMean,
             edgeOpaqueRatio = edgeOpaqueRatio,
             edgeUniformity = edgeUniformity,
             backgroundCoverage = backgroundCoverage,
-            colorBins = colorBins.size,
+            opaqueCoverage = opaqueCoverage,
+            dominantColor = dominantColor,
+            dominantRatio = dominantRatio,
+            dominantCanvasCoverage = dominantCanvasCoverage,
+            colorBins = colorBins,
             detail = detail,
-            segmentConfidence = confidence,
+            averageLuminance = averageLuminance,
             shouldSegment = shouldSegment
         )
+    }
+
+    private fun segmentationConfidence(analysis: IconAnalysis): Float {
+        val uniformityScore =
+            (1f - analysis.edgeUniformity / SEGMENT_EDGE_UNIFORMITY_MAX).coerceIn(0f, 1f)
+        val coverageScore =
+            (1f - abs(analysis.backgroundCoverage - 0.62f) / 0.62f).coerceIn(0f, 1f)
+        val complexityScore =
+            (1f - analysis.colorBins / SEGMENT_MAX_COLOR_BINS.toFloat()).coerceIn(0f, 1f)
+
+        return (
+            0.76f +
+                uniformityScore * 0.10f +
+                coverageScore * 0.06f +
+                complexityScore * 0.05f
+            ).coerceIn(0.76f, 0.97f)
+    }
+
+    private fun isUsefulBackgroundColor(color: Int): Boolean {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+        val lum = BitmapUtils.luminance(color)
+        return lum > 0.10f && (hsv[1] > 0.12f || lum > 0.55f)
+    }
+
+    private fun quantizedColor(index: Int): Int {
+        val r = (index shr 6) and 0x7
+        val g = (index shr 3) and 0x7
+        val b = index and 0x7
+        return Color.rgb(r * 32 + 16, g * 32 + 16, b * 32 + 16)
     }
 
     private fun sampleEdge(bitmap: Bitmap): List<Int> {
         val w = bitmap.width
         val h = bitmap.height
-        val samples = ArrayList<Int>(96)
-        val points = 24
+        val samples = ArrayList<Int>(128)
+        val points = 32
 
         repeat(points) { i ->
             val x = (i * (w - 1) / (points - 1f)).roundToInt().coerceIn(0, w - 1)
@@ -555,11 +551,5 @@ class DarkIconEngine(private val size: Int = 256) {
             (Color.green(from) * inverse + Color.green(to) * t).roundToInt().coerceIn(0, 255),
             (Color.blue(from) * inverse + Color.blue(to) * t).roundToInt().coerceIn(0, 255)
         )
-    }
-
-    private fun backgroundFor(style: IconStyle): Int = when (style) {
-        IconStyle.DARK -> DARK_BG
-        IconStyle.AMOLED -> AMOLED_BG
-        IconStyle.TINTED -> TINT_BG
     }
 }

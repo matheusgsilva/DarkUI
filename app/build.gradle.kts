@@ -1,7 +1,37 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+abstract class PrepareTemplateApkTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val inputApk: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        val destination = outputDir.get().asFile
+        destination.deleteRecursively()
+        destination.mkdirs()
+
+        inputApk.get().asFile.copyTo(
+            destination.resolve("darkui-template.apk"),
+            overwrite = true
+        )
+    }
 }
 
 android {
@@ -12,14 +42,17 @@ android {
         applicationId = "com.matheus.darkui"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -27,32 +60,46 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlin {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
-    buildFeatures { compose = true }
+
+    buildFeatures {
+        compose = true
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     packaging {
-        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "META-INF/DEPENDENCIES")
+        resources.excludes += setOf(
+            "/META-INF/{AL2.0,LGPL2.1}",
+            "META-INF/DEPENDENCIES"
+        )
     }
 }
 
-val generatedTemplateAssets = layout.buildDirectory.dir("generated/templateAssets")
-val prepareTemplateApk by tasks.registering(Copy::class) {
+val prepareTemplateApk = tasks.register<PrepareTemplateApkTask>("prepareTemplateApk") {
     dependsOn(":iconpacktemplate:assembleRelease")
-    val templateApk = project(":iconpacktemplate").layout.buildDirectory.file(
-        "outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+    inputApk.set(
+        project(":iconpacktemplate").layout.buildDirectory.file(
+            "outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+        )
     )
-    from(templateApk)
-    into(generatedTemplateAssets)
-    rename { "darkui-template.apk" }
+    outputDir.set(layout.buildDirectory.dir("generated/templateAssets"))
 }
 
-android.sourceSets["main"].assets.srcDir(generatedTemplateAssets.get().asFile)
-
-tasks.configureEach {
-    if (name.startsWith("merge") && name.endsWith("Assets")) dependsOn(prepareTemplateApk)
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            prepareTemplateApk,
+            PrepareTemplateApkTask::outputDir
+        )
+    }
 }
 
 dependencies {
@@ -73,8 +120,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Android port of the APK Signature Scheme implementation used on-device.
     implementation("com.github.MuntashirAkon:apksig-android:4.4.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.16.1")
 }

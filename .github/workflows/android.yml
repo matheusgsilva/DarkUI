@@ -7,28 +7,84 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4.0.4
         with:
           packages: ''
+
       - name: Install Android SDK 36
-        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+        run: |
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0"
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
-      - name: Run unit tests
+
+      - name: Build icon-pack template
+        run: gradle :iconpacktemplate:assembleRelease --stacktrace
+
+      - name: Verify 1024 unique icon slots
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import re
+          import zipfile
+
+          apk = "iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+          pattern = re.compile(r"^res/.*/icon_\d{4}\.png$")
+
+          with zipfile.ZipFile(apk) as z:
+              names = sorted(name for name in z.namelist() if pattern.match(name))
+              assert len(names) == 1024, f"expected 1024 slots, found {len(names)}"
+
+              digests = {hashlib.sha256(z.read(name)).digest() for name in names}
+              assert len(digests) == 1024, (
+                  f"AAPT deduplicated icon slots: only {len(digests)} unique payloads"
+              )
+
+          print("Template OK: 1024 distinct PNG resource slots")
+          PY
+
+      - name: Build debug and release APKs
+        run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
+
+      - name: Verify template is embedded
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import zipfile
+
+          apk = "app/build/outputs/apk/debug/app-debug.apk"
+          with zipfile.ZipFile(apk) as z:
+              names = set(z.namelist())
+              assert "assets/darkui-template.apk" in names, "template asset missing from app APK"
+          print("Main APK contains darkui-template.apk")
+          PY
+
+      - name: Run dark-icon unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Run Android lint
+        run: gradle :app:lintDebug --stacktrace
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: DarkUI-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: DarkUI-build-and-reports
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html

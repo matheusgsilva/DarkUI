@@ -21,12 +21,10 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -52,7 +50,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.matheus.darkui.model.AppIconItem
-import com.matheus.darkui.model.IconStyle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,7 +59,9 @@ fun DarkUiScreen(viewModel: DarkUiViewModel) {
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshExternalState()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshExternalState()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -81,13 +80,15 @@ fun DarkUiScreen(viewModel: DarkUiViewModel) {
                     Column {
                         Text("DarkUI", fontWeight = FontWeight.Bold)
                         Text(
-                            "Dark icons inteligentes para One UI",
+                            "Ícones Dark automáticos para One UI",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
         }
     ) { inner ->
@@ -99,7 +100,7 @@ fun DarkUiScreen(viewModel: DarkUiViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item { SummaryCard(state, viewModel) }
-            item { StyleSelector(state.style, enabled = !state.busy, onSelect = viewModel::setStyle) }
+
             item {
                 OutlinedTextField(
                     value = state.query,
@@ -111,9 +112,11 @@ fun DarkUiScreen(viewModel: DarkUiViewModel) {
                     singleLine = true
                 )
             }
+
             items(filtered, key = { it.app.packageName }) { item ->
-                AppIconRow(item = item, enabled = !state.busy, onCycleMode = { viewModel.cycleMode(item.app.packageName) })
+                AppIconRow(item)
             }
+
             item { PackActions(state, viewModel) }
             item { Spacer(Modifier.height(28.dp)) }
         }
@@ -121,30 +124,69 @@ fun DarkUiScreen(viewModel: DarkUiViewModel) {
 }
 
 @Composable
-private fun SummaryCard(state: DarkUiViewModel.UiState, vm: DarkUiViewModel) {
+private fun SummaryCard(
+    state: DarkUiViewModel.UiState,
+    vm: DarkUiViewModel
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
         shape = RoundedCornerShape(24.dp)
     ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Icon(Icons.Default.DarkMode, null)
                 Column(Modifier.weight(1f)) {
-                    Text("${state.apps.size} aplicativos", fontWeight = FontWeight.SemiBold)
-                    Text(state.status, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "${state.apps.size} aplicativos",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        state.status,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
+
             if (state.busy) {
-                LinearProgressIndicator(progress = { state.progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(
+                    progress = { state.progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
+
+            Text(
+                "O tratamento é automático: logos simples recebem fundo Dark; " +
+                    "ícones em camadas preservam o símbolo; jogos e artes complexas " +
+                    "mantêm a composição original com luminosidade reduzida.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = vm::scanApps, enabled = !state.busy, modifier = Modifier.weight(1f)) {
+                OutlinedButton(
+                    onClick = vm::scanApps,
+                    enabled = !state.busy,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(Icons.Default.Refresh, null)
                     Spacer(Modifier.size(6.dp))
-                    Text("Escanear")
+                    Text("Atualizar")
                 }
-                OutlinedButton(onClick = vm::regenerateAll, enabled = !state.busy && state.apps.isNotEmpty(), modifier = Modifier.weight(1f)) {
+
+                OutlinedButton(
+                    onClick = vm::regenerateAll,
+                    enabled = !state.busy && state.apps.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(Icons.Default.Build, null)
                     Spacer(Modifier.size(6.dp))
                     Text("Regerar")
@@ -155,44 +197,35 @@ private fun SummaryCard(state: DarkUiViewModel.UiState, vm: DarkUiViewModel) {
 }
 
 @Composable
-private fun StyleSelector(style: IconStyle, enabled: Boolean, onSelect: (IconStyle) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Estilo global", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconStyle.entries.forEach { option ->
-                FilterChip(
-                    selected = option == style,
-                    onClick = { onSelect(option) },
-                    enabled = enabled,
-                    label = { Text(option.title) }
-                )
-            }
-        }
-        Text(
-            "Toque no modo de um app para alternar Auto → Dark → AMOLED → Tinted → Original.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun AppIconRow(item: AppIconItem, enabled: Boolean, onCycleMode: () -> Unit) {
+private fun AppIconRow(item: AppIconItem) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
         shape = RoundedCornerShape(20.dp)
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Image(
                     bitmap = item.app.originalBitmap.asImageBitmap(),
                     contentDescription = "Original",
                     modifier = Modifier.size(54.dp),
                     contentScale = ContentScale.Fit
                 )
+
                 Text("→", style = MaterialTheme.typography.titleLarge)
-                Box(Modifier.size(54.dp), contentAlignment = Alignment.Center) {
+
+                Box(
+                    Modifier.size(54.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     item.generated?.let {
                         Image(
                             bitmap = it.bitmap.asImageBitmap(),
@@ -202,8 +235,14 @@ private fun AppIconRow(item: AppIconItem, enabled: Boolean, onCycleMode: () -> U
                         )
                     }
                 }
+
                 Column(Modifier.weight(1f)) {
-                    Text(item.app.label, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(
+                        item.app.label,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.Medium
+                    )
                     Text(
                         item.app.packageName,
                         maxLines = 1,
@@ -213,32 +252,41 @@ private fun AppIconRow(item: AppIconItem, enabled: Boolean, onCycleMode: () -> U
                     )
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = onCycleMode, enabled = enabled, label = { Text(item.mode.title) })
-                item.generated?.let {
-                    Text(
-                        "${it.method} • ${(it.confidence * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+
+            item.generated?.let {
+                Text(
+                    "${it.method} • ${(it.confidence * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
 }
 
 @Composable
-private fun PackActions(state: DarkUiViewModel.UiState, vm: DarkUiViewModel) {
+private fun PackActions(
+    state: DarkUiViewModel.UiState,
+    vm: DarkUiViewModel
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         HorizontalDivider()
-        Text("Aplicar na One UI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
         Text(
-            "O DarkUI cria um APK de icon pack com os ícones acima. O Android pede confirmação para instalar e o Theme Park faz a aplicação final.",
+            "Aplicar na One UI",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Text(
+            "O DarkUI gera um único icon pack Dark. O Android pede confirmação " +
+                "para instalar e o Theme Park faz a aplicação final.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
         Button(
             onClick = vm::buildPack,
             enabled = !state.busy && state.apps.any { it.generated != null },
@@ -246,27 +294,59 @@ private fun PackActions(state: DarkUiViewModel.UiState, vm: DarkUiViewModel) {
         ) {
             Icon(Icons.Default.Build, null)
             Spacer(Modifier.size(8.dp))
-            Text("Gerar e instalar icon pack")
+            Text("Gerar e instalar ícones Dark")
         }
+
         if (state.builtApk != null) {
-            OutlinedButton(onClick = vm::installBuiltPack, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = vm::installBuiltPack,
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Icon(Icons.Default.Download, null)
                 Spacer(Modifier.size(8.dp))
-                Text(if (state.generatedPackInstalled) "Reinstalar/atualizar pack" else "Instalar pack gerado")
+                Text(
+                    if (state.generatedPackInstalled) {
+                        "Atualizar pack instalado"
+                    } else {
+                        "Instalar pack gerado"
+                    }
+                )
             }
         }
-        OutlinedButton(onClick = vm::exportIcons, enabled = !state.busy && state.apps.any { it.generated != null }, modifier = Modifier.fillMaxWidth()) {
+
+        OutlinedButton(
+            onClick = vm::exportIcons,
+            enabled = !state.busy && state.apps.any { it.generated != null },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Icon(Icons.Default.Download, null)
             Spacer(Modifier.size(8.dp))
             Text("Exportar PNGs")
         }
-        Button(onClick = vm::openThemePark, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+
+        Button(
+            onClick = vm::openThemePark,
+            enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Icon(Icons.Default.Settings, null)
             Spacer(Modifier.size(8.dp))
-            Text(if (state.themeParkInstalled) "Abrir Theme Park" else "Instalar/abrir Theme Park")
+            Text(
+                if (state.themeParkInstalled) {
+                    "Abrir Theme Park"
+                } else {
+                    "Instalar/abrir Theme Park"
+                }
+            )
         }
+
         Text(
-            if (state.generatedPackInstalled) "✓ DarkUI Generated está instalado." else "O pack ainda não está instalado.",
+            if (state.generatedPackInstalled) {
+                "✓ DarkUI Generated está instalado."
+            } else {
+                "O pack ainda não está instalado."
+            },
             style = MaterialTheme.typography.labelMedium
         )
     }

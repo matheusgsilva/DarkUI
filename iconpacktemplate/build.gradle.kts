@@ -1,4 +1,5 @@
-import java.util.Base64
+import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.OutputDirectory
@@ -20,14 +21,21 @@ abstract class GenerateIconSlotsTask : DefaultTask() {
         val drawableDir = root.resolve("drawable-nodpi")
         drawableDir.mkdirs()
 
-        val transparentPng = Base64.getDecoder().decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
-        )
-
         repeat(1024) { index ->
-            drawableDir
-                .resolve("icon_%04d.png".format(index))
-                .writeBytes(transparentPng)
+            val image = BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB)
+            val rgb = ((index.toLong() * 2654435761L) and 0x00FFFFFFL).toInt()
+            val color = 0xFF000000.toInt() or rgb
+
+            for (y in 0 until 2) {
+                for (x in 0 until 2) {
+                    image.setRGB(x, y, color)
+                }
+            }
+
+            val file = drawableDir.resolve("icon_%04d.png".format(index))
+            check(ImageIO.write(image, "png", file)) {
+                "Could not generate $file"
+            }
         }
     }
 }
