@@ -21,7 +21,7 @@ abstract class GenerateIconSlotsTask : DefaultTask() {
         drawableDir.mkdirs()
 
         val transparentPng = Base64.getDecoder().decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+5qVqGQAAAABJRU5ErkJggg=="
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
         )
 
         repeat(1024) { index ->
