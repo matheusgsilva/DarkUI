@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 12
+        const val ENGINE_VERSION = 13
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -275,6 +275,7 @@ class DarkIconEngine(private val size: Int = 256) {
         }
 
         val target = deriveDarkVariant(background)
+        val allowForegroundLift = shouldLiftDarkForeground(source, background)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -289,8 +290,10 @@ class DarkIconEngine(private val size: Int = 256) {
 
             pixels[i] = if (backgroundWeight > 0.025f) {
                 blend(c, target, backgroundWeight * 0.97f)
-            } else {
+            } else if (allowForegroundLift) {
                 improveForegroundPixel(c)
+            } else {
+                c
             }
         }
 
@@ -329,7 +332,9 @@ class DarkIconEngine(private val size: Int = 256) {
                     val target = deriveDarkVariant(expected)
                     blend(c, target, backgroundWeight * 0.96f)
                 } else {
-                    improveForegroundPixel(c)
+                    // Gradient icons usually already use a bright/colored mark.
+                    // Preserve the mark exactly instead of globally lifting it.
+                    c
                 }
             }
         }
@@ -364,6 +369,7 @@ class DarkIconEngine(private val size: Int = 256) {
 
     private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
         val target = deriveDarkVariant(dominantColor)
+        val allowForegroundLift = shouldLiftDarkForeground(source, dominantColor)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -377,13 +383,58 @@ class DarkIconEngine(private val size: Int = 256) {
 
             pixels[i] = if (weight > 0.03f) {
                 blend(c, target, weight * 0.96f)
-            } else {
+            } else if (allowForegroundLift) {
                 improveForegroundPixel(c)
+            } else {
+                c
             }
         }
 
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
+    }
+
+    private fun shouldLiftDarkForeground(source: Bitmap, background: Int): Boolean {
+        var opaque = 0
+        var darkForeground = 0
+        val darkBins = BooleanArray(512)
+        var saturationTotal = 0f
+        val hsv = FloatArray(3)
+
+        for (y in 0 until source.height step 3) {
+            for (x in 0 until source.width step 3) {
+                val c = source.getPixel(x, y)
+                if (Color.alpha(c) <= 32) continue
+                opaque++
+
+                val distance = BitmapUtils.colorDistance(c, background)
+                val lum = BitmapUtils.luminance(c)
+
+                if (distance > 76f && lum < 0.22f) {
+                    darkForeground++
+                    Color.colorToHSV(c, hsv)
+                    saturationTotal += hsv[1]
+
+                    val r = Color.red(c) shr 5
+                    val g = Color.green(c) shr 5
+                    val b = Color.blue(c) shr 5
+                    darkBins[(r shl 6) or (g shl 3) or b] = true
+                }
+            }
+        }
+
+        if (opaque == 0 || darkForeground == 0) return false
+
+        val coverage = darkForeground.toFloat() / opaque
+        val averageSaturation = saturationTotal / darkForeground
+        val bins = darkBins.count { it }
+
+        // Lift only a small, mostly monochrome glyph. Larger/detailed dark areas
+        // are artwork (camera lens, calculator controls, shadows) and must stay
+        // exactly as authored.
+        return coverage <= 0.16f &&
+            averageSaturation <= 0.22f &&
+            bins <= 10
     }
 
     private fun deriveDarkVariant(original: Int): Int {
