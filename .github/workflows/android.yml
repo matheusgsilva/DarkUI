@@ -43,7 +43,7 @@ jobs:
           import zipfile
 
           apk = "iconpacktemplate/build/outputs/apk/release/iconpacktemplate-release-unsigned.apk"
-          slot = re.compile(r"(?:^|/)icon_\d{4}\.(?:png|webp)$")
+          slot = re.compile(r"^res/.*/icon_\d{4}\.png$")
 
           with zipfile.ZipFile(apk) as z:
               all_names = z.namelist()
