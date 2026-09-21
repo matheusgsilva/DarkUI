@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 13
+        const val ENGINE_VERSION = 14
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -175,7 +175,7 @@ class DarkIconEngine(private val size: Int = 256) {
             return recolorDominantRegion(source, analysis.dominantColor)
         }
 
-        return darkenMaskedSurface(source, allowDarkPixelLift = true)
+        return darkenMaskedSurface(source, allowDarkPixelLift = false)
     }
 
     private fun sampleOpaqueInnerBoundary(bitmap: Bitmap): List<Int> {
@@ -395,14 +395,18 @@ class DarkIconEngine(private val size: Int = 256) {
     }
 
     private fun shouldLiftDarkForeground(source: Bitmap, background: Int): Boolean {
+        val width = source.width
+        val height = source.height
+        val mask = BooleanArray(width * height)
+
         var opaque = 0
         var darkForeground = 0
-        val darkBins = BooleanArray(512)
         var saturationTotal = 0f
+        val darkBins = BooleanArray(512)
         val hsv = FloatArray(3)
 
-        for (y in 0 until source.height step 3) {
-            for (x in 0 until source.width step 3) {
+        for (y in 0 until height) {
+            for (x in 0 until width) {
                 val c = source.getPixel(x, y)
                 if (Color.alpha(c) <= 32) continue
                 opaque++
@@ -411,7 +415,10 @@ class DarkIconEngine(private val size: Int = 256) {
                 val lum = BitmapUtils.luminance(c)
 
                 if (distance > 76f && lum < 0.22f) {
+                    val index = y * width + x
+                    mask[index] = true
                     darkForeground++
+
                     Color.colorToHSV(c, hsv)
                     saturationTotal += hsv[1]
 
@@ -425,16 +432,33 @@ class DarkIconEngine(private val size: Int = 256) {
 
         if (opaque == 0 || darkForeground == 0) return false
 
+        var boundaryPixels = 0
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val index = y * width + x
+                if (!mask[index]) continue
+
+                val left = x == 0 || !mask[index - 1]
+                val right = x == width - 1 || !mask[index + 1]
+                val top = y == 0 || !mask[index - width]
+                val bottom = y == height - 1 || !mask[index + width]
+
+                if (left || right || top || bottom) boundaryPixels++
+            }
+        }
+
         val coverage = darkForeground.toFloat() / opaque
         val averageSaturation = saturationTotal / darkForeground
         val bins = darkBins.count { it }
+        val boundaryRatio = boundaryPixels.toFloat() / darkForeground
 
-        // Lift only a small, mostly monochrome glyph. Larger/detailed dark areas
-        // are artwork (camera lens, calculator controls, shadows) and must stay
+        // Only invert thin, glyph-like, mostly monochrome dark marks.
+        // Solid controls/lenses have a much lower boundary/area ratio and remain
         // exactly as authored.
-        return coverage <= 0.16f &&
+        return coverage <= 0.24f &&
             averageSaturation <= 0.22f &&
-            bins <= 10
+            bins <= 12 &&
+            boundaryRatio >= 0.20f
     }
 
     private fun deriveDarkVariant(original: Int): Int {
