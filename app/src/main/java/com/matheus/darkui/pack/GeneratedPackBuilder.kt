@@ -114,14 +114,14 @@ class GeneratedPackBuilder(
                         zout,
                         counting,
                         "assets/appfilter.xml",
-                        buildAppFilter(generated).toByteArray(),
+                        PackMetadata.buildAppFilter(generated).toByteArray(),
                         ZipEntry.DEFLATED
                     )
                     writeEntry(
                         zout,
                         counting,
                         "assets/drawable.xml",
-                        buildDrawableList(generated.size).toByteArray(),
+                        PackMetadata.buildDrawableList(generated.size).toByteArray(),
                         ZipEntry.DEFLATED
                     )
                     writeEntry(
@@ -168,52 +168,6 @@ class GeneratedPackBuilder(
             }
             out.toByteArray()
         }
-
-    private fun buildAppFilter(items: List<AppIconItem>): String = buildString {
-        append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
-        append("<resources>\n")
-
-        items.forEachIndexed { index, item ->
-            val drawable = "icon_%04d".format(index)
-
-            item.app.components.forEach { component ->
-                val cls = if (component.className.startsWith('.')) {
-                    component.packageName + component.className
-                } else {
-                    component.className
-                }
-
-                append("    <item component=\"ComponentInfo{")
-                append(xml(component.packageName))
-                    .append('/')
-                    .append(xml(cls))
-                append("}\" drawable=\"")
-                    .append(drawable)
-                    .append("\" />\n")
-            }
-        }
-
-        append("</resources>\n")
-    }
-
-    private fun buildDrawableList(count: Int): String = buildString {
-        append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
-        append("<resources>\n")
-        append("    <category title=\"DarkUI Generated\" />\n")
-
-        repeat(count) { index ->
-            append("    <item drawable=\"icon_%04d\" />\n".format(index))
-        }
-
-        append("</resources>\n")
-    }
-
-    private fun xml(value: String): String = value
-        .replace("&", "&amp;")
-        .replace("\"", "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("'", "&apos;")
 
     private fun writeEntry(
         zout: ZipOutputStream,
