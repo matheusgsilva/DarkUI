@@ -34,14 +34,68 @@ class DarkIconEngineTest {
             CircleGlyphDrawable(Color.WHITE)
         )
 
+        val original = BitmapUtils.drawableToBitmap(icon, 256)
         val result = engine.generate(icon)
 
         val background = result.bitmap.getPixel(128, 20)
         val foreground = result.bitmap.getPixel(128, 128)
 
-        assertTrue("adaptive background luminance=${BitmapUtils.luminance(background)}", BitmapUtils.luminance(background) < 0.12f)
-        assertTrue("adaptive foreground luminance=${BitmapUtils.luminance(foreground)}", BitmapUtils.luminance(foreground) > 0.65f)
-        assertTrue(result.method.contains("adaptive"))
+        assertTrue(
+            "adaptive background luminance=${BitmapUtils.luminance(background)}",
+            BitmapUtils.luminance(background) < 0.16f
+        )
+        assertTrue(
+            "adaptive foreground luminance=${BitmapUtils.luminance(foreground)}",
+            BitmapUtils.luminance(foreground) > 0.65f
+        )
+
+        for (y in 0 until 256 step 8) {
+            for (x in 0 until 256 step 8) {
+                val originalVisible = Color.alpha(original.getPixel(x, y)) > 8
+                val generatedVisible = Color.alpha(result.bitmap.getPixel(x, y)) > 8
+                assertTrue(
+                    "adaptive mask/scale changed at x=$x y=$y",
+                    originalVisible == generatedVisible
+                )
+            }
+        }
+    }
+
+    @Test
+    fun adaptiveIconKeepsForegroundPositionAndScale() {
+        val icon = AdaptiveIconDrawable(
+            ColorDrawable(Color.WHITE),
+            CircleGlyphDrawable(Color.BLACK)
+        )
+
+        val original = BitmapUtils.drawableToBitmap(icon, 256)
+        val result = engine.generate(icon).bitmap
+
+        fun visibleBounds(bitmap: Bitmap): IntArray {
+            var minX = 256
+            var minY = 256
+            var maxX = -1
+            var maxY = -1
+            for (y in 0 until 256) {
+                for (x in 0 until 256) {
+                    if (Color.alpha(bitmap.getPixel(x, y)) > 8) {
+                        minX = minOf(minX, x)
+                        minY = minOf(minY, y)
+                        maxX = maxOf(maxX, x)
+                        maxY = maxOf(maxY, y)
+                    }
+                }
+            }
+            return intArrayOf(minX, minY, maxX, maxY)
+        }
+
+        val before = visibleBounds(original)
+        val after = visibleBounds(result)
+
+        assertTrue("left bound changed", before[0] == after[0])
+        assertTrue("top bound changed", before[1] == after[1])
+        assertTrue("right bound changed", before[2] == after[2])
+        assertTrue("bottom bound changed", before[3] == after[3])
     }
 
     @Test
