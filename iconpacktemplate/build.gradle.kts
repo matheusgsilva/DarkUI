@@ -88,7 +88,7 @@ androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
         val apkDir = variant.artifacts.get(SingleArtifact.APK)
         stageTemplateApk.configure {
-            dependsOn(variant.assembleProvider)
+            dependsOn("assembleRelease")
             from(apkDir) {
                 include("*.apk")
                 rename { "darkui-template.apk" }
