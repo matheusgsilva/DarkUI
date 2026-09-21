@@ -64,8 +64,21 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
 
-            val apps = withContext(Dispatchers.IO) {
-                scanner.scan().map { AppIconItem(it) }
+            val scanResult = runCatching {
+                withContext(Dispatchers.IO) {
+                    scanner.scan().map { AppIconItem(it) }
+                }
+            }
+
+            val apps = scanResult.getOrElse { error ->
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        progress = 0f,
+                        status = "Falha ao ler aplicativos: ${error.message ?: error.javaClass.simpleName}"
+                    )
+                }
+                return@launch
             }
 
             _state.update {
@@ -238,11 +251,17 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val output = snapshot.toMutableList()
+        var failures = 0
 
         withContext(Dispatchers.Default) {
             output.indices.forEach { index ->
                 val item = output[index]
-                output[index] = item.copy(generated = generateItem(item, force))
+                val generated = runCatching {
+                    generateItem(item, force)
+                }.getOrNull()
+
+                if (generated == null) failures++
+                output[index] = item.copy(generated = generated)
 
                 if (index % 4 == 0 || index == output.lastIndex) {
                     _state.update {
@@ -256,12 +275,17 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        val generatedCount = output.count { it.generated != null }
         _state.update {
             it.copy(
                 apps = output,
                 busy = false,
                 progress = 1f,
-                status = "${output.size} ícones Dark prontos."
+                status = if (failures == 0) {
+                    "$generatedCount ícones Dark prontos."
+                } else {
+                    "$generatedCount ícones Dark prontos; $failures não puderam ser processados."
+                }
             )
         }
     }
