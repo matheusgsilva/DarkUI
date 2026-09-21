@@ -120,6 +120,29 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun blackGlyphOnLightBackgroundIsLiftedAfterDarkConversion() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+        canvas.drawRect(112f, 54f, 144f, 202f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+        val background = result.bitmap.getPixel(42, 42)
+        val glyph = result.bitmap.getPixel(128, 128)
+
+        assertTrue(
+            "light background must convert to dark; luminance=${BitmapUtils.luminance(background)}",
+            BitmapUtils.luminance(background) < 0.14f
+        )
+        assertTrue(
+            "black glyph must be lifted; luminance=${BitmapUtils.luminance(glyph)}",
+            BitmapUtils.luminance(glyph) > 0.18f
+        )
+    }
+
+    @Test
     fun smoothBrandGradientBecomesDarkWithoutDestroyingWhiteLogo() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
