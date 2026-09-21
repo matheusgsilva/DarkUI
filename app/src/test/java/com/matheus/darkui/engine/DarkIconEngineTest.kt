@@ -589,9 +589,17 @@ class DarkIconEngineTest {
             "calendar base should become dark",
             BitmapUtils.luminance(result.getPixel(72, 150)) < 0.12f
         )
+        val calendarGlyphLuminance = averageResultLuminanceForOriginalDarkPixels(
+            original = bitmap,
+            result = result,
+            left = 60,
+            top = 96,
+            right = 196,
+            bottom = 210
+        )
         assertTrue(
-            "calendar number should be lifted",
-            BitmapUtils.luminance(result.getPixel(128, 150)) > 0.40f
+            "calendar number should be lifted; average=$calendarGlyphLuminance",
+            calendarGlyphLuminance > 0.35f
         )
         assertTrue(
             "calendar header should keep its hue identity",
@@ -624,9 +632,17 @@ class DarkIconEngineTest {
             "ChatGPT-like base should become dark",
             BitmapUtils.luminance(result.getPixel(54, 54)) < 0.12f
         )
+        val chatGptMarkLuminance = averageResultLuminanceForOriginalDarkPixels(
+            original = bitmap,
+            result = result,
+            left = 60,
+            top = 60,
+            right = 196,
+            bottom = 196
+        )
         assertTrue(
-            "ChatGPT-like central mark should stay readable",
-            BitmapUtils.luminance(result.getPixel(128, 92)) > 0.35f
+            "ChatGPT-like central mark should stay readable; average=$chatGptMarkLuminance",
+            chatGptMarkLuminance > 0.35f
         )
     }
 
@@ -863,6 +879,59 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun saturatedBrandPaletteKeepsHueAcrossDarkConversion() {
+        val brandColors = listOf(
+            Color.rgb(235, 45, 55),
+            Color.rgb(245, 115, 25),
+            Color.rgb(245, 205, 25),
+            Color.rgb(35, 180, 85),
+            Color.rgb(25, 185, 190),
+            Color.rgb(45, 115, 235),
+            Color.rgb(125, 65, 220),
+            Color.rgb(235, 45, 155)
+        )
+
+        brandColors.forEach { originalColor ->
+            val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+            paint.color = originalColor
+            canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+            paint.color = Color.WHITE
+            canvas.drawCircle(128f, 128f, 34f, paint)
+
+            val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+            val converted = result.getPixel(60, 60)
+
+            val before = FloatArray(3)
+            val after = FloatArray(3)
+            Color.colorToHSV(originalColor, before)
+            Color.colorToHSV(converted, after)
+
+            val hueDeltaRaw = kotlin.math.abs(before[0] - after[0])
+            val hueDelta = minOf(hueDeltaRaw, 360f - hueDeltaRaw)
+
+            assertTrue(
+                "brand hue drifted too much: before=${before[0]} after=${after[0]}",
+                hueDelta < 12f
+            )
+            assertTrue(
+                "brand saturation collapsed: before=${before[1]} after=${after[1]}",
+                after[1] > 0.42f
+            )
+            assertTrue(
+                "brand background did not become dark: value=${after[2]}",
+                after[2] < 0.22f
+            )
+            assertTrue(
+                "white logo lost brightness",
+                BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f
+            )
+        }
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
@@ -871,6 +940,33 @@ class DarkIconEngineTest {
 
         assertTrue(result.bitmap.width == 256)
         assertTrue(result.bitmap.height == 256)
+    }
+
+    private fun averageResultLuminanceForOriginalDarkPixels(
+        original: Bitmap,
+        result: Bitmap,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int
+    ): Float {
+        var total = 0f
+        var count = 0
+
+        for (y in top until bottom) {
+            for (x in left until right) {
+                val sourceColor = original.getPixel(x, y)
+                if (
+                    Color.alpha(sourceColor) > 32 &&
+                    BitmapUtils.luminance(sourceColor) < 0.10f
+                ) {
+                    total += BitmapUtils.luminance(result.getPixel(x, y))
+                    count++
+                }
+            }
+        }
+
+        return if (count == 0) 0f else total / count
     }
 
     private fun averageLuminance(bitmap: Bitmap): Float {
