@@ -321,12 +321,7 @@ class DarkIconEngine(private val size: Int = 256) {
             val c = pixels[i]
             if (Color.alpha(c) < 8) continue
 
-            val lum = BitmapUtils.luminance(c)
-            pixels[i] = if (lum < 0.12f) {
-                mixWithWhite(c, 0.52f)
-            } else {
-                improveForegroundPixel(c)
-            }
+            pixels[i] = improveForegroundPixel(c)
         }
 
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
