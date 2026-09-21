@@ -16,7 +16,7 @@ abstract class PrepareTemplateApkTask : DefaultTask() {
     // keeping this as @InputFile makes a clean build fail even though dependsOn is
     // correct. The task verifies the produced file explicitly at execution time.
     @get:Internal
-    abstract val templateApkDir: DirectoryProperty
+    abstract val stagedTemplateDir: DirectoryProperty
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -27,26 +27,9 @@ abstract class PrepareTemplateApkTask : DefaultTask() {
         destination.deleteRecursively()
         destination.mkdirs()
 
-        val apkDir = templateApkDir.get().asFile
-        val candidates = apkDir
-            .walkTopDown()
-            .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
-            .toList()
-
-        check(candidates.isNotEmpty()) {
-            "Icon-pack template APK was not produced by :iconpacktemplate:assembleRelease. " +
-                "No APK was found under $apkDir"
-        }
-
-        val source = candidates.singleOrNull()
-            ?: candidates.firstOrNull { it.name.contains("unsigned", ignoreCase = true) }
-            ?: error(
-                "Multiple icon-pack template APKs were produced under $apkDir: " +
-                    candidates.joinToString { it.name }
-            )
-
-        check(source.length() > 0L) {
-            "Icon-pack template APK is empty: $source"
+        val source = stagedTemplateDir.get().asFile.resolve("darkui-template.apk")
+        check(source.isFile && source.length() > 0L) {
+            "Staged icon-pack template APK is missing or empty: $source"
         }
 
         source.copyTo(
@@ -106,10 +89,10 @@ android {
 }
 
 val prepareTemplateApk = tasks.register<PrepareTemplateApkTask>("prepareTemplateApk") {
-    dependsOn(":iconpacktemplate:assembleRelease")
-    templateApkDir.set(
+    dependsOn(":iconpacktemplate:stageTemplateApk")
+    stagedTemplateDir.set(
         project(":iconpacktemplate").layout.buildDirectory.dir(
-            "outputs/apk/release"
+            "stagedTemplate"
         )
     )
     outputDir.set(layout.buildDirectory.dir("generated/templateAssets"))
