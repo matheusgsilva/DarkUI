@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 11
+        const val ENGINE_VERSION = 12
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -63,6 +63,17 @@ class DarkIconEngine(private val size: Int = 256) {
                 analysis = analysis,
                 factor = 0.74f,
                 method = "Dark automático • jogo preservado",
+                confidence = 0.99f
+            )
+        }
+
+        // Never invert or whiten an icon that is already dark. This guard must
+        // run before segmentation/masked-icon branches, because those branches may
+        // otherwise mistake existing dark artwork for low-contrast foreground.
+        if (analysis.isAlreadyDark) {
+            return SmartIconResult(
+                bitmap = source.copy(Bitmap.Config.ARGB_8888, false),
+                method = "Dark automático • já escuro preservado",
                 confidence = 0.99f
             )
         }
@@ -146,8 +157,13 @@ class DarkIconEngine(private val size: Int = 256) {
                 .average()
                 .toFloat()
 
-            if (uniformity <= 62f && isUsefulBackgroundColor(boundaryMean)) {
-                return recolorBackgroundLikePixels(source, boundaryMean)
+            if (uniformity <= 62f) {
+                if (isDarkBackgroundColor(boundaryMean)) {
+                    return source.copy(Bitmap.Config.ARGB_8888, false)
+                }
+                if (isUsefulBackgroundColor(boundaryMean)) {
+                    return recolorBackgroundLikePixels(source, boundaryMean)
+                }
             }
         }
 
@@ -159,7 +175,7 @@ class DarkIconEngine(private val size: Int = 256) {
             return recolorDominantRegion(source, analysis.dominantColor)
         }
 
-        return darkenMaskedSurface(source)
+        return darkenMaskedSurface(source, allowDarkPixelLift = true)
     }
 
     private fun sampleOpaqueInnerBoundary(bitmap: Bitmap): List<Int> {
@@ -210,7 +226,10 @@ class DarkIconEngine(private val size: Int = 256) {
         return samples
     }
 
-    private fun darkenMaskedSurface(source: Bitmap): Bitmap {
+    private fun darkenMaskedSurface(
+        source: Bitmap,
+        allowDarkPixelLift: Boolean
+    ): Bitmap {
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -228,8 +247,11 @@ class DarkIconEngine(private val size: Int = 256) {
                 // Keep bright neutral logo strokes/details bright.
                 hsv[1] < 0.14f && lum > 0.72f -> c
 
-                // Dark monochrome strokes should invert instead of becoming muddy.
-                lum < 0.20f -> improveForegroundPixel(c)
+                // Only lift dark strokes after we deliberately converted a light
+                // surface to dark. Existing dark artwork must remain untouched.
+                lum < 0.20f && allowDarkPixelLift -> improveForegroundPixel(c)
+
+                lum < 0.20f -> c
 
                 // Colored surface: preserve hue, push it decisively into Dark.
                 hsv[1] >= 0.18f -> {
@@ -248,6 +270,10 @@ class DarkIconEngine(private val size: Int = 256) {
     }
 
     private fun recolorBackgroundLikePixels(source: Bitmap, background: Int): Bitmap {
+        if (isDarkBackgroundColor(background)) {
+            return source.copy(Bitmap.Config.ARGB_8888, false)
+        }
+
         val target = deriveDarkVariant(background)
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
@@ -590,6 +616,9 @@ class DarkIconEngine(private val size: Int = 256) {
                 complexityScore * 0.05f
             ).coerceIn(0.76f, 0.97f)
     }
+
+    private fun isDarkBackgroundColor(color: Int): Boolean =
+        Color.alpha(color) > 32 && BitmapUtils.luminance(color) < 0.16f
 
     private fun isUsefulBackgroundColor(color: Int): Boolean {
         val hsv = FloatArray(3)
