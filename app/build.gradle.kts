@@ -1,6 +1,5 @@
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
@@ -17,7 +16,7 @@ abstract class PrepareTemplateApkTask : DefaultTask() {
     // keeping this as @InputFile makes a clean build fail even though dependsOn is
     // correct. The task verifies the produced file explicitly at execution time.
     @get:Internal
-    abstract val inputApk: RegularFileProperty
+    abstract val templateApkDir: DirectoryProperty
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -28,9 +27,26 @@ abstract class PrepareTemplateApkTask : DefaultTask() {
         destination.deleteRecursively()
         destination.mkdirs()
 
-        val source = inputApk.get().asFile
-        check(source.isFile && source.length() > 0L) {
-            "Icon-pack template APK was not produced by :iconpacktemplate:assembleRelease: $source"
+        val apkDir = templateApkDir.get().asFile
+        val candidates = apkDir
+            .walkTopDown()
+            .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+            .toList()
+
+        check(candidates.isNotEmpty()) {
+            "Icon-pack template APK was not produced by :iconpacktemplate:assembleRelease. " +
+                "No APK was found under $apkDir"
+        }
+
+        val source = candidates.singleOrNull()
+            ?: candidates.firstOrNull { it.name.contains("unsigned", ignoreCase = true) }
+            ?: error(
+                "Multiple icon-pack template APKs were produced under $apkDir: " +
+                    candidates.joinToString { it.name }
+            )
+
+        check(source.length() > 0L) {
+            "Icon-pack template APK is empty: $source"
         }
 
         source.copyTo(
@@ -91,9 +107,9 @@ android {
 
 val prepareTemplateApk = tasks.register<PrepareTemplateApkTask>("prepareTemplateApk") {
     dependsOn(":iconpacktemplate:assembleRelease")
-    inputApk.set(
-        project(":iconpacktemplate").layout.buildDirectory.file(
-            "outputs/apk/release/iconpacktemplate-release-unsigned.apk"
+    templateApkDir.set(
+        project(":iconpacktemplate").layout.buildDirectory.dir(
+            "outputs/apk/release"
         )
     )
     outputDir.set(layout.buildDirectory.dir("generated/templateAssets"))
