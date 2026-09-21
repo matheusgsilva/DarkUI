@@ -1,10 +1,7 @@
 package com.matheus.darkui.engine
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import com.matheus.darkui.model.SmartIconResult
 import com.matheus.darkui.util.BitmapUtils
@@ -24,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 9
+        const val ENGINE_VERSION = 10
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -54,10 +51,9 @@ class DarkIconEngine(private val size: Int = 256) {
     }
 
     fun generate(drawable: Drawable, isGame: Boolean = false): SmartIconResult {
-        if (drawable is AdaptiveIconDrawable && !isGame) {
-            return generateAdaptive(drawable)
-        }
-
+        // Always flatten the exact launcher drawable first. This preserves the
+        // launcher-provided mask, alpha silhouette, scale and positioning. The
+        // renderer is allowed to change colors only, never geometry.
         val source = BitmapUtils.drawableToBitmap(drawable, size)
         val analysis = analyze(source)
 
@@ -137,84 +133,6 @@ class DarkIconEngine(private val size: Int = 256) {
             method = "Dark automático • arte preservada",
             confidence = 0.82f
         )
-    }
-
-    private fun generateAdaptive(icon: AdaptiveIconDrawable): SmartIconResult {
-        val foreground = BitmapUtils.drawableToBitmap(icon.foreground, size)
-        val background = BitmapUtils.drawableToBitmap(icon.background, size)
-        val foregroundAnalysis = analyze(foreground)
-
-        if (
-            foregroundAnalysis.opaqueCoverage > 0.72f &&
-            foregroundAnalysis.detail > 0.18f
-        ) {
-            val complete = BitmapUtils.drawableToBitmap(icon, size)
-            val completeAnalysis = analyze(complete)
-            return preserveArtwork(
-                source = complete,
-                analysis = completeAnalysis,
-                factor = if (completeAnalysis.isAlreadyDark) 0.96f else 0.80f,
-                method = "Dark automático • adaptive complexo",
-                confidence = 0.90f
-            )
-        }
-
-        val darkBackground = darkenAdaptiveBackground(background)
-        val darkForeground = transformAdaptiveForeground(foreground, foregroundAnalysis)
-
-        val composite = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(composite)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        canvas.drawBitmap(darkBackground, 0f, 0f, paint)
-        canvas.drawBitmap(darkForeground, 0f, 0f, paint)
-
-        return SmartIconResult(
-            bitmap = composite,
-            method = "Dark automático • adaptive em camadas",
-            confidence = 0.99f
-        )
-    }
-
-    private fun transformAdaptiveForeground(
-        source: Bitmap,
-        analysis: IconAnalysis
-    ): Bitmap {
-        if (
-            analysis.dominantCanvasCoverage >= 0.20f &&
-            isUsefulBackgroundColor(analysis.dominantColor)
-        ) {
-            return recolorDominantRegion(source, analysis.dominantColor)
-        }
-        return improveForegroundContrast(source)
-    }
-
-    private fun darkenAdaptiveBackground(source: Bitmap): Bitmap {
-        val out = source.copy(Bitmap.Config.ARGB_8888, true)
-        val pixels = IntArray(out.width * out.height)
-        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
-        val hsv = FloatArray(3)
-
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            val alpha = Color.alpha(c)
-            if (alpha == 0) continue
-
-            Color.colorToHSV(c, hsv)
-            val originalValue = hsv[2]
-
-            if (hsv[1] < 0.10f) {
-                hsv[1] = 0f
-                hsv[2] = (0.055f + originalValue * 0.045f).coerceIn(0.055f, 0.11f)
-            } else {
-                hsv[1] = (hsv[1] * 0.96f + 0.02f).coerceIn(0f, 1f)
-                hsv[2] = (0.065f + originalValue * 0.075f).coerceIn(0.07f, 0.15f)
-            }
-
-            pixels[i] = Color.HSVToColor(alpha, hsv)
-        }
-
-        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
-        return out
     }
 
     private fun recolorBackgroundLikePixels(source: Bitmap, background: Int): Bitmap {
