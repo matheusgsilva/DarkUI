@@ -121,7 +121,7 @@ class GeneratedPackBuilder(
                         zout,
                         counting,
                         "assets/drawable.xml",
-                        PackMetadata.buildDrawableList(generated.size).toByteArray(),
+                        PackMetadata.PackMetadata.buildDrawableList(generated.size).toByteArray(),
                         ZipEntry.DEFLATED
                     )
                     writeEntry(
