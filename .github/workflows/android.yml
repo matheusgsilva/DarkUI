@@ -97,6 +97,53 @@ jobs:
           "$AAPT2" dump badging "$APK" | head -40
           cp "$APK" "app/build/outputs/apk/debug/DarkUI-debug.apk"
 
+      - name: Verify Android 16 16KB page-size compatibility
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          ZIPALIGN="$ANDROID_HOME/build-tools/36.0.0/zipalign"
+
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK"
+
+          rm -rf /tmp/darkui-native
+          mkdir -p /tmp/darkui-native
+          unzip -q "$APK" 'lib/*/*.so' -d /tmp/darkui-native
+
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+
+          libs = sorted(pathlib.Path("/tmp/darkui-native").glob("lib/*/*.so"))
+          assert libs, "APK contains no native libraries to validate"
+
+          bad = []
+          for lib in libs:
+              out = subprocess.check_output(
+                  ["readelf", "-lW", str(lib)],
+                  text=True,
+                  errors="replace",
+              )
+              alignments = []
+              for line in out.splitlines():
+                  if re.match(r"^\s*LOAD\s", line):
+                      parts = line.split()
+                      align = parts[-1]
+                      alignments.append(int(align, 16) if align.startswith("0x") else int(align))
+
+              if not alignments:
+                  bad.append((str(lib), "no LOAD segments"))
+                  continue
+
+              minimum = min(alignments)
+              print(f"{lib}: LOAD alignments={alignments}")
+              if minimum < 16384:
+                  bad.append((str(lib), f"minimum LOAD alignment={minimum}"))
+
+          assert not bad, "16KB-incompatible native libraries: " + repr(bad)
+          print("All native libraries are compatible with 16KB memory pages")
+          PY
+
       - name: Verify embedded template integrity
         shell: bash
         run: |
