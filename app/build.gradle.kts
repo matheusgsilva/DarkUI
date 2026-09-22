@@ -3,12 +3,51 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import java.net.URL
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+
+abstract class DownloadAiModelTask : DefaultTask() {
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun download() {
+        val destination = outputDir.get().asFile
+        destination.mkdirs()
+
+        val modelFile = destination.resolve("u2netp.onnx")
+        if (modelFile.isFile && modelFile.length() > 4_000_000L) {
+            return
+        }
+
+        val temp = destination.resolve("u2netp.onnx.part")
+        temp.delete()
+
+        URL(
+            "https://raw.githubusercontent.com/ChiangyangNPU/MattingDemo-Android/" +
+                "636044e100bcc5bfc2af0a7d097eeed8e28bdc2a/" +
+                "app/src/main/assets/u2netp.onnx"
+        ).openStream().use { input ->
+            temp.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        check(temp.length() > 4_000_000L) {
+            "Downloaded U2NetP model is unexpectedly small: ${temp.length()} bytes"
+        }
+
+        temp.copyTo(modelFile, overwrite = true)
+        temp.delete()
+    }
+}
+
 
 abstract class PrepareTemplateApkTask : DefaultTask() {
     // The APK is produced by :iconpacktemplate:assembleRelease. Gradle 9.x validates
@@ -88,6 +127,12 @@ android {
     }
 }
 
+
+val downloadAiModel = tasks.register<DownloadAiModelTask>("downloadAiModel") {
+    outputDir.set(layout.buildDirectory.dir("generated/aiAssets"))
+}
+
+
 val prepareTemplateApk = tasks.register<PrepareTemplateApkTask>("prepareTemplateApk") {
     dependsOn(":iconpacktemplate:stageTemplateApk")
     stagedTemplateDir.set(
@@ -103,6 +148,10 @@ androidComponents {
         variant.sources.assets?.addGeneratedSourceDirectory(
             prepareTemplateApk,
             PrepareTemplateApkTask::outputDir
+        )
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            downloadAiModel,
+            DownloadAiModelTask::outputDir
         )
     }
 }
@@ -126,8 +175,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("com.github.MuntashirAkon:apksig-android:4.4.0")
-    implementation("com.google.android.gms:play-services-base:18.11.0")
-    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16.1")
