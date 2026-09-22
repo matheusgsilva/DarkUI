@@ -21,13 +21,13 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 19
+        const val ENGINE_VERSION = 20
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
         private const val SEGMENT_EDGE_UNIFORMITY_MAX = 42f
         private const val SEGMENT_MIN_BACKGROUND_COVERAGE = 0.24f
-        private const val SEGMENT_MAX_BACKGROUND_COVERAGE = 0.94f
+        private const val SEGMENT_MAX_BACKGROUND_COVERAGE = 0.985f
         private const val SEGMENT_MAX_COLOR_BINS = 88
         private const val SEGMENT_MAX_DETAIL = 0.34f
     }
@@ -100,8 +100,9 @@ class DarkIconEngine(private val size: Int = 256) {
 
         if (
             analysis.opaqueCoverage >= 0.90f &&
-            analysis.colorBins > 96 &&
-            analysis.detail > 0.07f
+            analysis.colorBins > 40 &&
+            analysis.detail > 0.045f &&
+            analysis.dominantRatio < 0.12f
         ) {
             return preserveArtwork(
                 source = source,
@@ -133,7 +134,8 @@ class DarkIconEngine(private val size: Int = 256) {
         if (
             analysis.edgeOpaqueRatio < 0.45f &&
             analysis.detail > 0.22f &&
-            analysis.colorBins > 40
+            analysis.colorBins > 40 &&
+            analysis.dominantRatio < 0.40f
         ) {
             return preserveArtwork(
                 source = source,
@@ -288,12 +290,12 @@ class DarkIconEngine(private val size: Int = 256) {
         val centralRatio = centralForeground.toFloat() / foreground
         val usefulRatio = usefulForeground.toFloat() / foreground
 
-        return backgroundRatio >= 0.56f &&
-            foregroundRatio in 0.025f..0.30f &&
-            centralRatio >= 0.66f &&
-            usefulRatio >= 0.48f &&
-            components.count <= 6 &&
-            components.largestFillRatio <= 0.64f
+        return backgroundRatio >= 0.38f &&
+            foregroundRatio in 0.015f..0.46f &&
+            centralRatio >= 0.48f &&
+            usefulRatio >= 0.22f &&
+            components.count <= 20 &&
+            components.largestFillRatio <= 0.86f
     }
 
     private data class ComponentStats(
@@ -899,10 +901,37 @@ class DarkIconEngine(private val size: Int = 256) {
                 centerX in (width * 0.18f)..(width * 0.82f) &&
                     centerY in (height * 0.18f)..(height * 0.82f)
 
+            var distinctInterior = 0
+            var interiorSamples = 0
+            val hsvInterior = FloatArray(3)
+
+            for (iy in minY..maxY step 2) {
+                for (ix in minX..maxX step 2) {
+                    val idx = iy * width + ix
+                    if (candidate[idx]) continue
+                    val interiorColor = source.getPixel(ix, iy)
+                    if (Color.alpha(interiorColor) <= 32) continue
+
+                    interiorSamples++
+                    Color.colorToHSV(interiorColor, hsvInterior)
+                    if (
+                        BitmapUtils.colorDistance(interiorColor, background) > 70f &&
+                        hsvInterior[1] > 0.22f
+                    ) {
+                        distinctInterior++
+                    }
+                }
+            }
+
+            val distinctInteriorRatio =
+                if (interiorSamples == 0) 0f
+                else distinctInterior.toFloat() / interiorSamples
+
             val glyphLike =
                 coverage in 0.002f..0.28f &&
                     fillRatio <= 0.72f &&
-                    central
+                    central &&
+                    distinctInteriorRatio < 0.08f
 
             if (glyphLike) {
                 component.forEach { output[it] = true }
