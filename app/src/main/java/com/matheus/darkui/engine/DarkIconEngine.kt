@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 16
+        const val ENGINE_VERSION = 17
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -87,6 +87,17 @@ class DarkIconEngine(private val size: Int = 256) {
             )
         }
 
+        // iOS-like enclosure treatment: for simple colored/gradient icon bases
+        // with a distinct central glyph, replace only the enclosure with a true
+        // dark base and keep the authored glyph pixels unchanged.
+        if (isSmoothEnclosureWithCentralGlyph(source, analysis)) {
+            return SmartIconResult(
+                bitmap = convertEnclosureToDarkPreserveGlyph(source),
+                method = "Dark automático • glyph preservado",
+                confidence = 0.97f
+            )
+        }
+
         // Smooth, full-bleed brand gradients (for example many social/media icons)
         // are not uniform enough for the flat-background branch above. Estimate
         // their background from the four corners and only darken pixels that fit
@@ -143,6 +154,209 @@ class DarkIconEngine(private val size: Int = 256) {
             factor = 0.82f,
             method = "Dark automático • arte preservada",
             confidence = 0.82f
+        )
+    }
+
+    private data class EnclosureModel(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int,
+        val c00: Int,
+        val c10: Int,
+        val c01: Int,
+        val c11: Int
+    )
+
+    private fun isSmoothEnclosureWithCentralGlyph(
+        source: Bitmap,
+        analysis: IconAnalysis
+    ): Boolean {
+        if (analysis.isAlreadyDark || analysis.detail > 0.46f) return false
+
+        val model = buildEnclosureModel(source) ?: return false
+        val width = (model.right - model.left + 1).coerceAtLeast(1)
+        val height = (model.bottom - model.top + 1).coerceAtLeast(1)
+
+        var opaque = 0
+        var smoothBackground = 0
+        var foreground = 0
+        var centralForeground = 0
+        var brightOrColoredForeground = 0
+
+        for (y in model.top..model.bottom step 2) {
+            val ty = if (height <= 1) 0f else (y - model.top) / (height - 1f)
+            for (x in model.left..model.right step 2) {
+                val color = source.getPixel(x, y)
+                if (Color.alpha(color) <= 32) continue
+                opaque++
+
+                val tx = if (width <= 1) 0f else (x - model.left) / (width - 1f)
+                val expected = bilinearColor(
+                    model.c00,
+                    model.c10,
+                    model.c01,
+                    model.c11,
+                    tx,
+                    ty
+                )
+                val distance = BitmapUtils.colorDistance(color, expected)
+
+                if (distance <= 54f) {
+                    smoothBackground++
+                } else if (distance >= 76f) {
+                    foreground++
+
+                    val central =
+                        x in (model.left + width * 0.15f).roundToInt()..
+                            (model.right - width * 0.15f).roundToInt() &&
+                            y in (model.top + height * 0.15f).roundToInt()..
+                            (model.bottom - height * 0.15f).roundToInt()
+
+                    if (central) centralForeground++
+
+                    val hsv = FloatArray(3)
+                    Color.colorToHSV(color, hsv)
+                    if (BitmapUtils.luminance(color) > 0.58f || hsv[1] > 0.28f) {
+                        brightOrColoredForeground++
+                    }
+                }
+            }
+        }
+
+        if (opaque == 0 || foreground == 0) return false
+
+        val backgroundRatio = smoothBackground.toFloat() / opaque
+        val foregroundRatio = foreground.toFloat() / opaque
+        val centralRatio = centralForeground.toFloat() / foreground
+        val usefulForegroundRatio = brightOrColoredForeground.toFloat() / foreground
+
+        return backgroundRatio >= 0.46f &&
+            foregroundRatio in 0.035f..0.42f &&
+            centralRatio >= 0.58f &&
+            usefulForegroundRatio >= 0.35f
+    }
+
+    private fun convertEnclosureToDarkPreserveGlyph(source: Bitmap): Bitmap {
+        val model = buildEnclosureModel(source)
+            ?: return source.copy(Bitmap.Config.ARGB_8888, false)
+
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        val modelWidth = (model.right - model.left + 1).coerceAtLeast(1)
+        val modelHeight = (model.bottom - model.top + 1).coerceAtLeast(1)
+        val darkBase = Color.rgb(12, 12, 16)
+
+        for (y in model.top..model.bottom) {
+            val ty = if (modelHeight <= 1) 0f else (y - model.top) / (modelHeight - 1f)
+            for (x in model.left..model.right) {
+                val index = y * out.width + x
+                val color = pixels[index]
+                if (Color.alpha(color) < 8) continue
+
+                val tx = if (modelWidth <= 1) 0f else (x - model.left) / (modelWidth - 1f)
+                val expected = bilinearColor(
+                    model.c00,
+                    model.c10,
+                    model.c01,
+                    model.c11,
+                    tx,
+                    ty
+                )
+                val distance = BitmapUtils.colorDistance(color, expected)
+
+                val foregroundWeight = BitmapUtils.smoothStep(48f, 92f, distance)
+                val backgroundWeight = 1f - foregroundWeight
+
+                pixels[index] = if (backgroundWeight > 0.04f) {
+                    blend(color, darkBase, backgroundWeight * 0.98f)
+                } else {
+                    preserveOrLiftGlyphPixel(color)
+                }
+            }
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+        return out
+    }
+
+    private fun preserveOrLiftGlyphPixel(color: Int): Int {
+        val luminance = BitmapUtils.luminance(color)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+
+        return when {
+            luminance > 0.72f -> color
+            hsv[1] > 0.20f -> color
+            luminance < 0.10f -> mixWithWhite(color, 0.78f)
+            luminance < 0.18f -> mixWithWhite(color, 0.58f)
+            else -> color
+        }
+    }
+
+    private fun buildEnclosureModel(source: Bitmap): EnclosureModel? {
+        var minX = source.width
+        var minY = source.height
+        var maxX = -1
+        var maxY = -1
+
+        for (y in 0 until source.height step 2) {
+            for (x in 0 until source.width step 2) {
+                if (Color.alpha(source.getPixel(x, y)) > 96) {
+                    minX = minOf(minX, x)
+                    minY = minOf(minY, y)
+                    maxX = maxOf(maxX, x)
+                    maxY = maxOf(maxY, y)
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) return null
+
+        val width = (maxX - minX + 1).coerceAtLeast(1)
+        val height = (maxY - minY + 1).coerceAtLeast(1)
+        val insetX = (width * 0.16f).roundToInt().coerceAtLeast(2)
+        val insetY = (height * 0.16f).roundToInt().coerceAtLeast(2)
+
+        val left = (minX + insetX).coerceIn(0, source.width - 1)
+        val right = (maxX - insetX).coerceIn(0, source.width - 1)
+        val top = (minY + insetY).coerceIn(0, source.height - 1)
+        val bottom = (maxY - insetY).coerceIn(0, source.height - 1)
+
+        if (left >= right || top >= bottom) return null
+
+        fun nearestOpaque(startX: Int, startY: Int): Int {
+            for (radius in 0..12) {
+                for (dy in -radius..radius) {
+                    for (dx in -radius..radius) {
+                        val x = (startX + dx).coerceIn(minX, maxX)
+                        val y = (startY + dy).coerceIn(minY, maxY)
+                        val color = source.getPixel(x, y)
+                        if (Color.alpha(color) > 96) return color
+                    }
+                }
+            }
+            return Color.TRANSPARENT
+        }
+
+        val c00 = nearestOpaque(left, top)
+        val c10 = nearestOpaque(right, top)
+        val c01 = nearestOpaque(left, bottom)
+        val c11 = nearestOpaque(right, bottom)
+
+        if (listOf(c00, c10, c01, c11).any { Color.alpha(it) <= 96 }) return null
+
+        return EnclosureModel(
+            left = minX,
+            top = minY,
+            right = maxX,
+            bottom = maxY,
+            c00 = c00,
+            c10 = c10,
+            c01 = c01,
+            c11 = c11
         )
     }
 
