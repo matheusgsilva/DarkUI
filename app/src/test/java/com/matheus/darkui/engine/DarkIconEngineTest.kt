@@ -1062,6 +1062,112 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun contactsLikeSolidRedBaseDoesNotUseBlackEnclosureMode() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(245, 48, 58)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.WHITE
+        canvas.drawCircle(128f, 100f, 24f, paint)
+        canvas.drawOval(RectF(88f, 132f, 168f, 184f), paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+
+        assertTrue(
+            "solid red Contacts-like icon must not use glyph-preserved enclosure mode: ${result.method}",
+            !result.method.contains("glyph preservado")
+        )
+
+        val bg = result.bitmap.getPixel(52, 52)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(bg, hsv)
+        assertTrue("red identity should be retained", hsv[0] < 35f || hsv[0] > 325f)
+        assertTrue("red should remain saturated", hsv[1] > 0.45f)
+        assertTrue("white person glyph should remain bright", BitmapUtils.luminance(result.bitmap.getPixel(128, 100)) > 0.70f)
+    }
+
+    @Test
+    fun cymeraLikeColoredCameraKeepsDarkLensDark() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(65, 190, 190)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.WHITE
+        canvas.drawCircle(128f, 128f, 64f, paint)
+
+        paint.color = Color.rgb(32, 34, 38)
+        canvas.drawCircle(128f, 128f, 42f, paint)
+
+        paint.color = Color.rgb(100, 105, 110)
+        canvas.drawCircle(128f, 128f, 21f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+
+        assertTrue(
+            "colored camera/object must not use glyph-preserved enclosure mode: ${result.method}",
+            !result.method.contains("glyph preservado")
+        )
+        assertTrue(
+            "dark camera lens must stay dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(128, 100)) < 0.22f
+        )
+        assertTrue(
+            "white ring must remain bright",
+            BitmapUtils.luminance(result.bitmap.getPixel(128, 70)) > 0.65f
+        )
+    }
+
+    @Test
+    fun duolingoLikeMascotIsPreservedInsteadOfFlattenedToGlyph() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.rgb(85, 210, 0)
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.rgb(45, 145, 0)
+        canvas.drawOval(RectF(58f, 62f, 198f, 178f), paint)
+
+        paint.color = Color.WHITE
+        canvas.drawOval(RectF(66f, 84f, 116f, 156f), paint)
+        canvas.drawOval(RectF(140f, 84f, 190f, 156f), paint)
+
+        paint.color = Color.rgb(35, 35, 35)
+        canvas.drawCircle(92f, 120f, 11f, paint)
+        canvas.drawCircle(164f, 120f, 11f, paint)
+
+        paint.color = Color.rgb(255, 165, 0)
+        canvas.drawOval(RectF(108f, 146f, 148f, 174f), paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+
+        assertTrue(
+            "mascot must not be classified as a simple glyph: ${result.method}",
+            !result.method.contains("glyph preservado")
+        )
+        assertTrue(
+            "mascot eyes should remain bright",
+            BitmapUtils.luminance(result.bitmap.getPixel(92, 105)) > 0.60f
+        )
+        assertTrue(
+            "mascot pupils should remain dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(92, 120)) < 0.22f
+        )
+        val beak = result.bitmap.getPixel(128, 160)
+        assertTrue(
+            "orange beak identity should remain",
+            Color.red(beak) > Color.green(beak) && Color.green(beak) > Color.blue(beak)
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
