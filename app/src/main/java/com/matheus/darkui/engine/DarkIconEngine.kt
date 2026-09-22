@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 21
+        const val ENGINE_VERSION = 22
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -47,7 +47,17 @@ class DarkIconEngine(private val size: Int = 256) {
         val shouldSegment: Boolean
     ) {
         val isAlreadyDark: Boolean
-            get() = averageLuminance < 0.16f
+            get() {
+                if (averageLuminance >= 0.16f) return false
+
+                val hsv = FloatArray(3)
+                Color.colorToHSV(dominantColor, hsv)
+
+                // A vivid purple/blue can have low relative luminance while still
+                // being visually bright. "Already dark" requires an actually low
+                // HSV value too, otherwise the surface still needs a dark variant.
+                return hsv[2] < 0.38f
+            }
     }
 
     fun generate(drawable: Drawable, isGame: Boolean = false): SmartIconResult {
@@ -121,7 +131,7 @@ class DarkIconEngine(private val size: Int = 256) {
         if (
             analysis.opaqueCoverage >= 0.90f &&
             analysis.colorBins > 24 &&
-            analysis.detail > 0.02f &&
+            analysis.detail > 0.006f &&
             analysis.dominantRatio < 0.20f
         ) {
             return preserveArtwork(
