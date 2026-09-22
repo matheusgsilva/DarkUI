@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 22
+        const val ENGINE_VERSION = 23
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -1272,8 +1272,18 @@ class DarkIconEngine(private val size: Int = 256) {
             ).coerceIn(0.76f, 0.97f)
     }
 
-    private fun isDarkBackgroundColor(color: Int): Boolean =
-        Color.alpha(color) > 32 && BitmapUtils.luminance(color) < 0.16f
+    private fun isDarkBackgroundColor(color: Int): Boolean {
+        if (Color.alpha(color) <= 32) return false
+        if (BitmapUtils.luminance(color) >= 0.16f) return false
+
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+
+        // Saturated purple/blue can have low relative luminance while still being
+        // visually vivid. Only a genuinely low HSV value counts as an already
+        // dark background that should be preserved unchanged.
+        return hsv[2] < 0.38f
+    }
 
     private fun isUsefulBackgroundColor(color: Int): Boolean {
         val hsv = FloatArray(3)
