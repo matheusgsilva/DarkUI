@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 17
+        const val ENGINE_VERSION = 18
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -116,6 +116,19 @@ class DarkIconEngine(private val size: Int = 256) {
             )
         }
 
+        if (
+            analysis.edgeOpaqueRatio < 0.45f &&
+            (analysis.detail > 0.20f || analysis.colorBins > 56)
+        ) {
+            return preserveArtwork(
+                source = source,
+                analysis = analysis,
+                factor = 0.92f,
+                method = "Dark automático • ilustração preservada",
+                confidence = 0.95f
+            )
+        }
+
         if (analysis.edgeOpaqueRatio < 0.45f) {
             val masked = recolorMaskedIcon(source, analysis)
             return SmartIconResult(
@@ -151,7 +164,7 @@ class DarkIconEngine(private val size: Int = 256) {
         return preserveArtwork(
             source = source,
             analysis = analysis,
-            factor = 0.82f,
+            factor = 0.92f,
             method = "Dark automático • arte preservada",
             confidence = 0.82f
         )
@@ -172,17 +185,51 @@ class DarkIconEngine(private val size: Int = 256) {
         source: Bitmap,
         analysis: IconAnalysis
     ): Boolean {
-        if (analysis.isAlreadyDark || analysis.detail > 0.46f) return false
+        if (analysis.isAlreadyDark || analysis.detail > 0.28f) return false
 
         val model = buildEnclosureModel(source) ?: return false
         val width = (model.right - model.left + 1).coerceAtLeast(1)
         val height = (model.bottom - model.top + 1).coerceAtLeast(1)
 
+        val corners = listOf(model.c00, model.c10, model.c01, model.c11)
+        val hsv = FloatArray(3)
+        var cornerSat = 0f
+        var cornerLum = 0f
+        corners.forEach {
+            Color.colorToHSV(it, hsv)
+            cornerSat += hsv[1]
+            cornerLum += BitmapUtils.luminance(it)
+        }
+        cornerSat /= corners.size
+        cornerLum /= corners.size
+
+        var cornerSpread = 0f
+        for (i in corners.indices) {
+            for (j in i + 1 until corners.size) {
+                cornerSpread = maxOf(
+                    cornerSpread,
+                    BitmapUtils.colorDistance(corners[i], corners[j])
+                )
+            }
+        }
+
+        val neutralLightBase = cornerSat <= 0.18f && cornerLum >= 0.58f
+        val brandGradientBase =
+            cornerSpread >= 58f &&
+                cornerSat >= 0.30f &&
+                analysis.detail <= 0.20f
+
+        // Solid saturated backgrounds (red Contacts, green mascots, cyan cameras)
+        // are not "iOS black enclosure" candidates. Only neutral-light bases or
+        // genuine smooth brand gradients can use this treatment.
+        if (!neutralLightBase && !brandGradientBase) return false
+
+        val foregroundMask = BooleanArray(source.width * source.height)
         var opaque = 0
         var smoothBackground = 0
         var foreground = 0
         var centralForeground = 0
-        var brightOrColoredForeground = 0
+        var usefulForeground = 0
 
         for (y in model.top..model.bottom step 2) {
             val ty = if (height <= 1) 0f else (y - model.top) / (height - 1f)
@@ -193,32 +240,26 @@ class DarkIconEngine(private val size: Int = 256) {
 
                 val tx = if (width <= 1) 0f else (x - model.left) / (width - 1f)
                 val expected = bilinearColor(
-                    model.c00,
-                    model.c10,
-                    model.c01,
-                    model.c11,
-                    tx,
-                    ty
+                    model.c00, model.c10, model.c01, model.c11, tx, ty
                 )
                 val distance = BitmapUtils.colorDistance(color, expected)
 
-                if (distance <= 54f) {
+                if (distance <= 52f) {
                     smoothBackground++
-                } else if (distance >= 76f) {
+                } else if (distance >= 78f) {
                     foreground++
+                    foregroundMask[y * source.width + x] = true
 
                     val central =
-                        x in (model.left + width * 0.15f).roundToInt()..
-                            (model.right - width * 0.15f).roundToInt() &&
-                            y in (model.top + height * 0.15f).roundToInt()..
-                            (model.bottom - height * 0.15f).roundToInt()
-
+                        x in (model.left + width * 0.16f).roundToInt()..
+                            (model.right - width * 0.16f).roundToInt() &&
+                            y in (model.top + height * 0.16f).roundToInt()..
+                            (model.bottom - height * 0.16f).roundToInt()
                     if (central) centralForeground++
 
-                    val hsv = FloatArray(3)
                     Color.colorToHSV(color, hsv)
                     if (BitmapUtils.luminance(color) > 0.58f || hsv[1] > 0.28f) {
-                        brightOrColoredForeground++
+                        usefulForeground++
                     }
                 }
             }
@@ -226,15 +267,82 @@ class DarkIconEngine(private val size: Int = 256) {
 
         if (opaque == 0 || foreground == 0) return false
 
+        val components = foregroundComponentStats(foregroundMask, source.width, source.height)
         val backgroundRatio = smoothBackground.toFloat() / opaque
         val foregroundRatio = foreground.toFloat() / opaque
         val centralRatio = centralForeground.toFloat() / foreground
-        val usefulForegroundRatio = brightOrColoredForeground.toFloat() / foreground
+        val usefulRatio = usefulForeground.toFloat() / foreground
 
-        return backgroundRatio >= 0.46f &&
-            foregroundRatio in 0.035f..0.42f &&
-            centralRatio >= 0.58f &&
-            usefulForegroundRatio >= 0.35f
+        return backgroundRatio >= 0.56f &&
+            foregroundRatio in 0.025f..0.30f &&
+            centralRatio >= 0.66f &&
+            usefulRatio >= 0.48f &&
+            components.count <= 6 &&
+            components.largestFillRatio <= 0.64f
+    }
+
+    private data class ComponentStats(
+        val count: Int,
+        val largestFillRatio: Float
+    )
+
+    private fun foregroundComponentStats(
+        mask: BooleanArray,
+        width: Int,
+        height: Int
+    ): ComponentStats {
+        val visited = BooleanArray(mask.size)
+        val queue = IntArray(mask.size)
+        var count = 0
+        var largestFill = 0f
+
+        for (start in mask.indices) {
+            if (!mask[start] || visited[start]) continue
+            count++
+
+            var head = 0
+            var tail = 0
+            queue[tail++] = start
+            visited[start] = true
+
+            var area = 0
+            var minX = width
+            var minY = height
+            var maxX = -1
+            var maxY = -1
+
+            while (head < tail) {
+                val index = queue[head++]
+                area++
+                val x = index % width
+                val y = index / width
+                minX = minOf(minX, x)
+                minY = minOf(minY, y)
+                maxX = maxOf(maxX, x)
+                maxY = maxOf(maxY, y)
+
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        if (dx == 0 && dy == 0) continue
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) continue
+                        val next = ny * width + nx
+                        if (mask[next] && !visited[next]) {
+                            visited[next] = true
+                            queue[tail++] = next
+                        }
+                    }
+                }
+            }
+
+            val boxArea =
+                (maxX - minX + 1).coerceAtLeast(1) *
+                    (maxY - minY + 1).coerceAtLeast(1)
+            largestFill = maxOf(largestFill, area.toFloat() / boxArea)
+        }
+
+        return ComponentStats(count = count, largestFillRatio = largestFill)
     }
 
     private fun convertEnclosureToDarkPreserveGlyph(source: Bitmap): Bitmap {
@@ -500,7 +608,15 @@ class DarkIconEngine(private val size: Int = 256) {
         }
 
         val target = deriveDarkVariant(background)
-        val liftMask = buildLiftMask(source, background)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(background, hsv)
+        val allowDarkGlyphLift =
+            hsv[1] <= 0.16f && BitmapUtils.luminance(background) >= 0.52f
+        val liftMask = if (allowDarkGlyphLift) {
+            buildLiftMask(source, background)
+        } else {
+            BooleanArray(source.width * source.height)
+        }
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
@@ -594,7 +710,15 @@ class DarkIconEngine(private val size: Int = 256) {
 
     private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
         val target = deriveDarkVariant(dominantColor)
-        val liftMask = buildLiftMask(source, dominantColor)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(dominantColor, hsv)
+        val allowDarkGlyphLift =
+            hsv[1] <= 0.16f && BitmapUtils.luminance(dominantColor) >= 0.52f
+        val liftMask = if (allowDarkGlyphLift) {
+            buildLiftMask(source, dominantColor)
+        } else {
+            BooleanArray(source.width * source.height)
+        }
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
