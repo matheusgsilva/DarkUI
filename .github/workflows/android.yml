@@ -85,6 +85,18 @@ jobs:
       - name: Build debug and release APKs
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
 
+      - name: Verify installable debug APK
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+
+          test -s "$APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$AAPT2" dump badging "$APK" | head -40
+          cp "$APK" "app/build/outputs/apk/debug/DarkUI-debug.apk"
+
       - name: Verify embedded template integrity
         shell: bash
         run: |
@@ -123,6 +135,7 @@ jobs:
           name: DarkUI-build-and-reports
           path: |
             app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/DarkUI-debug.apk
             app/build/outputs/apk/release/
             app/build/reports/tests/
             app/build/reports/lint-results-debug.html
