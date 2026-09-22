@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.matheus.darkui.data.AppScanner
+import com.matheus.darkui.engine.AiIconSegmenter
 import com.matheus.darkui.engine.DarkIconEngine
 import com.matheus.darkui.engine.IconCache
 import com.matheus.darkui.export.IconExporter
@@ -14,6 +15,7 @@ import com.matheus.darkui.model.SmartIconResult
 import com.matheus.darkui.pack.GeneratedPackBuilder
 import com.matheus.darkui.pack.PackInstaller
 import com.matheus.darkui.pack.ThemeParkLauncher
+import com.matheus.darkui.util.BitmapUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +40,9 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
     private val appContext = application.applicationContext
     private val scanner = AppScanner(appContext)
     private val engine = DarkIconEngine()
+    private val aiSegmenter: AiIconSegmenter? by lazy {
+        runCatching { AiIconSegmenter(appContext, AI_ICON_SIZE) }.getOrNull()
+    }
     private val cache = IconCache(appContext)
     private val packBuilder = GeneratedPackBuilder(appContext)
     private val installer = PackInstaller(appContext)
@@ -245,7 +250,7 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
             it.copy(
                 busy = true,
                 progress = 0f,
-                status = "Gerando aparência Dark automaticamente…",
+                status = "Analisando ícones com IA local…",
                 builtApk = null
             )
         }
@@ -276,15 +281,16 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val generatedCount = output.count { it.generated != null }
+        val aiCount = output.count { it.generated?.method?.startsWith("IA local") == true }
         _state.update {
             it.copy(
                 apps = output,
                 busy = false,
                 progress = 1f,
                 status = if (failures == 0) {
-                    "$generatedCount ícones Dark prontos."
+                    "$generatedCount ícones Dark prontos • $aiCount segmentados por IA."
                 } else {
-                    "$generatedCount ícones Dark prontos; $failures não puderam ser processados."
+                    "$generatedCount ícones Dark prontos; $failures falharam • $aiCount por IA."
                 }
             )
         }
@@ -301,7 +307,29 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        val generated = engine.generate(
+        val aiGenerated = if (!item.app.isGame) {
+            runCatching {
+                val source = BitmapUtils.drawableToBitmap(
+                    item.app.sourceDrawable,
+                    AI_ICON_SIZE
+                )
+                val segmentation = aiSegmenter?.segment(source)
+                if (segmentation != null) {
+                    engine.generateWithAiMask(
+                        source = source,
+                        foregroundMask = segmentation.mask,
+                        maskConfidence = segmentation.confidence,
+                        isGame = false
+                    )
+                } else {
+                    null
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+
+        val generated = aiGenerated ?: engine.generate(
             drawable = item.app.sourceDrawable,
             isGame = item.app.isGame
         )
@@ -313,5 +341,14 @@ class DarkUiViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         return generated
+    }
+
+    override fun onCleared() {
+        runCatching { aiSegmenter?.close() }
+        super.onCleared()
+    }
+
+    companion object {
+        private const val AI_ICON_SIZE = 256
     }
 }
