@@ -175,7 +175,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("com.github.MuntashirAkon:apksig-android:4.4.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16.1")
