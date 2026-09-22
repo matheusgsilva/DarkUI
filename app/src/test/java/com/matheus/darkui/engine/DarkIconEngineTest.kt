@@ -1168,6 +1168,115 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun aiMaskTurnsLightBackgroundDarkAndLiftsDarkGlyph() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 14f
+        }
+        canvas.drawCircle(128f, 128f, 44f, paint)
+
+        val mask = FloatArray(256 * 256)
+        for (y in 0 until 256) {
+            for (x in 0 until 256) {
+                val distance = kotlin.math.hypot((x - 128).toDouble(), (y - 128).toDouble())
+                if (distance in 34.0..54.0) {
+                    mask[y * 256 + x] = 1f
+                }
+            }
+        }
+
+        val result = engine.generateWithAiMask(bitmap, mask, 0.95f)
+        assertNotNull(result)
+        result!!
+
+        assertTrue(
+            "AI background should become dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(40, 40)) < 0.10f
+        )
+        assertTrue(
+            "dark glyph should become readable",
+            BitmapUtils.luminance(result.bitmap.getPixel(128, 84)) > 0.45f
+        )
+        assertTrue(result.method.startsWith("IA local"))
+    }
+
+    @Test
+    fun aiMaskPreservesBrightColoredForegroundExactly() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(245, 55, 155))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        canvas.drawCircle(128f, 128f, 48f, paint)
+
+        val mask = FloatArray(256 * 256)
+        for (y in 0 until 256) {
+            for (x in 0 until 256) {
+                val distance = kotlin.math.hypot((x - 128).toDouble(), (y - 128).toDouble())
+                if (distance <= 52.0) mask[y * 256 + x] = 1f
+            }
+        }
+
+        val result = engine.generateWithAiMask(bitmap, mask, 0.94f)
+        assertNotNull(result)
+        result!!
+
+        assertTrue(
+            "AI enclosure should become dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(40, 40)) < 0.10f
+        )
+        assertTrue(
+            "bright foreground should remain bright",
+            BitmapUtils.luminance(result.bitmap.getPixel(128, 128)) > 0.90f
+        )
+    }
+
+    @Test
+    fun aiMaskPreservesInternalMascotDetailsWhenWholeMascotIsForeground() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(235, 235, 235))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.rgb(85, 210, 0)
+        canvas.drawCircle(128f, 128f, 76f, paint)
+        paint.color = Color.WHITE
+        canvas.drawCircle(100f, 112f, 22f, paint)
+        canvas.drawCircle(156f, 112f, 22f, paint)
+        paint.color = Color.rgb(25, 25, 25)
+        canvas.drawCircle(100f, 112f, 8f, paint)
+        canvas.drawCircle(156f, 112f, 8f, paint)
+
+        val mask = FloatArray(256 * 256)
+        for (y in 0 until 256) {
+            for (x in 0 until 256) {
+                val distance = kotlin.math.hypot((x - 128).toDouble(), (y - 128).toDouble())
+                if (distance <= 80.0) mask[y * 256 + x] = 1f
+            }
+        }
+
+        val result = engine.generateWithAiMask(bitmap, mask, 0.93f)
+        assertNotNull(result)
+        result!!
+
+        val green = result.bitmap.getPixel(128, 160)
+        assertTrue("mascot green should be preserved", Color.green(green) > Color.red(green))
+        assertTrue(
+            "mascot pupil should remain dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(100, 112)) < 0.12f
+        )
+        assertTrue(
+            "outside background should become dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(30, 30)) < 0.10f
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
