@@ -932,6 +932,136 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun instagramLikeMaskedGradientBecomesTrueDarkBaseWithWhiteGlyph() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        val clip = android.graphics.Path().apply {
+            addRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, android.graphics.Path.Direction.CW)
+        }
+        canvas.save()
+        canvas.clipPath(clip)
+
+        for (x in 24 until 233) {
+            val t = (x - 24) / 208f
+            paint.color = Color.rgb(
+                245,
+                (35 + 85 * t).toInt(),
+                (205 - 135 * t).toInt().coerceAtLeast(55)
+            )
+            canvas.drawRect(x.toFloat(), 24f, x + 1f, 233f, paint)
+        }
+
+        paint.color = Color.WHITE
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 14f
+        canvas.drawRoundRect(RectF(72f, 72f, 184f, 184f), 30f, 30f, paint)
+        canvas.drawCircle(128f, 128f, 26f, paint)
+        paint.style = Paint.Style.FILL
+        canvas.drawCircle(164f, 92f, 7f, paint)
+        canvas.restore()
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap))
+        val out = result.bitmap
+
+        assertTrue(
+            "Instagram-like icon should use glyph-preserved mode: ${result.method}",
+            result.method.contains("glyph preservado")
+        )
+
+        val leftBackground = out.getPixel(52, 128)
+        val rightBackground = out.getPixel(204, 128)
+        assertTrue(
+            "left gradient background should become truly dark",
+            BitmapUtils.luminance(leftBackground) < 0.08f
+        )
+        assertTrue(
+            "right gradient background should become truly dark",
+            BitmapUtils.luminance(rightBackground) < 0.08f
+        )
+        assertTrue(
+            "dark enclosure should no longer retain a muddy gradient",
+            BitmapUtils.colorDistance(leftBackground, rightBackground) < 24f
+        )
+        assertTrue(
+            "white camera glyph should remain bright",
+            BitmapUtils.luminance(out.getPixel(128, 72)) > 0.70f
+        )
+        assertTrue(
+            "transparent outside corner must remain transparent",
+            Color.alpha(out.getPixel(4, 4)) == 0
+        )
+    }
+
+    @Test
+    fun kodiLikeWhiteBaseKeepsColoredGlyphOnDarkEnclosure() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.WHITE
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.rgb(45, 170, 225)
+        val glyph = android.graphics.Path().apply {
+            moveTo(128f, 64f)
+            lineTo(190f, 128f)
+            lineTo(128f, 192f)
+            lineTo(66f, 128f)
+            close()
+        }
+        canvas.drawPath(glyph, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+
+        assertTrue(
+            "white enclosure should become dark",
+            BitmapUtils.luminance(result.getPixel(52, 52)) < 0.12f
+        )
+        val center = result.getPixel(128, 128)
+        assertTrue(
+            "blue glyph must remain blue",
+            Color.blue(center) > Color.red(center) && Color.blue(center) > Color.green(center)
+        )
+        assertTrue(
+            "colored glyph should not be unnecessarily dimmed",
+            BitmapUtils.luminance(center) > 0.20f
+        )
+    }
+
+    @Test
+    fun kAccessLikeWhiteBaseKeepsGreenLineGlyph() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        paint.color = Color.WHITE
+        canvas.drawRoundRect(RectF(24f, 24f, 232f, 232f), 52f, 52f, paint)
+
+        paint.color = Color.rgb(110, 195, 55)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 18f
+        paint.strokeCap = Paint.Cap.ROUND
+        canvas.drawLine(82f, 76f, 82f, 178f, paint)
+        canvas.drawLine(104f, 142f, 136f, 174f, paint)
+        canvas.drawLine(136f, 174f, 176f, 92f, paint)
+
+        val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
+        val background = result.getPixel(52, 52)
+        val green = result.getPixel(82, 128)
+
+        assertTrue(
+            "white base should become dark",
+            BitmapUtils.luminance(background) < 0.12f
+        )
+        assertTrue(
+            "green glyph identity should be preserved",
+            Color.green(green) > Color.red(green) && Color.green(green) > Color.blue(green)
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
