@@ -121,7 +121,11 @@ class DarkIconEngine(private val size: Int = 256) {
         if (backgroundColors.isEmpty()) return null
 
         val backgroundReference = BitmapUtils.meanOpaqueColor(backgroundColors)
-        val allowDarkGlyphLift = isNeutralLightColor(backgroundReference)
+        val aiLiftMask = if (isNeutralLightColor(backgroundReference)) {
+            buildLiftMask(source, backgroundReference)
+        } else {
+            BooleanArray(source.width * source.height)
+        }
 
         val out = source.copy(Bitmap.Config.ARGB_8888, true)
         val pixels = IntArray(out.width * out.height)
@@ -145,7 +149,7 @@ class DarkIconEngine(private val size: Int = 256) {
                 when {
                     luminance > 0.70f -> color
                     hsv[1] > 0.20f -> color
-                    allowDarkGlyphLift && luminance < 0.22f -> improveForegroundPixel(color)
+                    aiLiftMask[i] && luminance < 0.22f -> improveForegroundPixel(color)
                     else -> color
                 }
             }
