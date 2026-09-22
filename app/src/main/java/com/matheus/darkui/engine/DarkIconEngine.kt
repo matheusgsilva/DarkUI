@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 23
+        const val ENGINE_VERSION = 24
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -58,6 +58,110 @@ class DarkIconEngine(private val size: Int = 256) {
                 // HSV value too, otherwise the surface still needs a dark variant.
                 return hsv[2] < 0.38f
             }
+    }
+
+    fun generateWithAiMask(
+        source: Bitmap,
+        foregroundMask: FloatArray,
+        maskConfidence: Float,
+        isGame: Boolean = false
+    ): SmartIconResult? {
+        if (isGame) return null
+        if (source.width != size || source.height != size) return null
+        if (foregroundMask.size != source.width * source.height) return null
+        if (maskConfidence < 0.34f) return null
+
+        val analysis = analyze(source)
+        if (analysis.isAlreadyDark) return null
+
+        var foregroundPixels = 0
+        var backgroundPixels = 0
+        var opaquePixels = 0
+        var edgeForeground = 0
+        var edgeOpaque = 0
+        val backgroundColors = ArrayList<Int>()
+
+        for (y in 0 until source.height) {
+            for (x in 0 until source.width) {
+                val index = y * source.width + x
+                val color = source.getPixel(x, y)
+                if (Color.alpha(color) <= 32) continue
+                opaquePixels++
+
+                val value = foregroundMask[index]
+                if (value >= 0.62f) foregroundPixels++
+                if (value <= 0.34f) {
+                    backgroundPixels++
+                    if ((x + y) % 4 == 0) backgroundColors += color
+                }
+
+                val edge =
+                    x < source.width * 0.10f ||
+                        x > source.width * 0.90f ||
+                        y < source.height * 0.10f ||
+                        y > source.height * 0.90f
+
+                if (edge) {
+                    edgeOpaque++
+                    if (value >= 0.62f) edgeForeground++
+                }
+            }
+        }
+
+        if (opaquePixels == 0 || backgroundPixels == 0 || foregroundPixels == 0) return null
+
+        val foregroundRatio = foregroundPixels.toFloat() / opaquePixels
+        val backgroundRatio = backgroundPixels.toFloat() / opaquePixels
+        val edgeForegroundRatio =
+            if (edgeOpaque == 0) 0f else edgeForeground.toFloat() / edgeOpaque
+
+        if (foregroundRatio !in 0.025f..0.82f) return null
+        if (backgroundRatio < 0.08f) return null
+        if (edgeForegroundRatio > 0.78f && foregroundRatio > 0.62f) return null
+        if (backgroundColors.isEmpty()) return null
+
+        val backgroundReference = BitmapUtils.meanOpaqueColor(backgroundColors)
+        val allowDarkGlyphLift = isNeutralLightColor(backgroundReference)
+
+        val out = source.copy(Bitmap.Config.ARGB_8888, true)
+        val pixels = IntArray(out.width * out.height)
+        out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        for (i in pixels.indices) {
+            val color = pixels[i]
+            if (Color.alpha(color) < 8) continue
+
+            val mask = foregroundMask[i].coerceIn(0f, 1f)
+            val foregroundWeight = BitmapUtils.smoothStep(0.38f, 0.68f, mask)
+            val backgroundWeight = 1f - foregroundWeight
+
+            pixels[i] = if (backgroundWeight > 0.04f) {
+                blend(color, DARK_NEUTRAL, backgroundWeight * 0.98f)
+            } else {
+                val luminance = BitmapUtils.luminance(color)
+                val hsv = FloatArray(3)
+                Color.colorToHSV(color, hsv)
+
+                when {
+                    luminance > 0.70f -> color
+                    hsv[1] > 0.20f -> color
+                    allowDarkGlyphLift && luminance < 0.22f -> improveForegroundPixel(color)
+                    else -> color
+                }
+            }
+        }
+
+        out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
+
+        return SmartIconResult(
+            bitmap = out,
+            method = "IA local • foreground segmentado",
+            confidence = (
+                0.80f +
+                    maskConfidence.coerceIn(0f, 1f) * 0.12f +
+                    (1f - edgeForegroundRatio).coerceIn(0f, 1f) * 0.06f
+                ).coerceIn(0.80f, 0.98f)
+        )
     }
 
     fun generate(drawable: Drawable, isGame: Boolean = false): SmartIconResult {
