@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 18
+        const val ENGINE_VERSION = 19
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -98,6 +98,20 @@ class DarkIconEngine(private val size: Int = 256) {
             )
         }
 
+        if (
+            analysis.opaqueCoverage >= 0.90f &&
+            analysis.colorBins > 96 &&
+            analysis.detail > 0.07f
+        ) {
+            return preserveArtwork(
+                source = source,
+                analysis = analysis,
+                factor = 0.96f,
+                method = "Dark automático • arte detalhada preservada",
+                confidence = 0.96f
+            )
+        }
+
         // Smooth, full-bleed brand gradients (for example many social/media icons)
         // are not uniform enough for the flat-background branch above. Estimate
         // their background from the four corners and only darken pixels that fit
@@ -118,7 +132,8 @@ class DarkIconEngine(private val size: Int = 256) {
 
         if (
             analysis.edgeOpaqueRatio < 0.45f &&
-            (analysis.detail > 0.20f || analysis.colorBins > 56)
+            analysis.detail > 0.22f &&
+            analysis.colorBins > 40
         ) {
             return preserveArtwork(
                 source = source,
@@ -231,9 +246,9 @@ class DarkIconEngine(private val size: Int = 256) {
         var centralForeground = 0
         var usefulForeground = 0
 
-        for (y in model.top..model.bottom step 2) {
+        for (y in model.top..model.bottom) {
             val ty = if (height <= 1) 0f else (y - model.top) / (height - 1f)
-            for (x in model.left..model.right step 2) {
+            for (x in model.left..model.right) {
                 val color = source.getPixel(x, y)
                 if (Color.alpha(color) <= 32) continue
                 opaque++
@@ -622,19 +637,28 @@ class DarkIconEngine(private val size: Int = 256) {
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
 
         for (i in pixels.indices) {
-            val c = pixels[i]
-            if (Color.alpha(c) < 8) continue
+            val color = pixels[i]
+            if (Color.alpha(color) < 8) continue
 
-            val distance = BitmapUtils.colorDistance(c, background)
+            val x = i % out.width
+            val y = i / out.width
+            val embeddedBrightDetail = isEmbeddedBrightDetail(
+                source = source,
+                x = x,
+                y = y,
+                background = background
+            )
+
+            val distance = BitmapUtils.colorDistance(color, background)
             val foregroundWeight = BitmapUtils.smoothStep(18f, 76f, distance)
             val backgroundWeight = 1f - foregroundWeight
 
-            pixels[i] = if (backgroundWeight > 0.025f) {
-                blend(c, target, backgroundWeight * 0.95f)
-            } else if (liftMask[i]) {
-                improveForegroundPixel(c)
-            } else {
-                c
+            pixels[i] = when {
+                embeddedBrightDetail -> color
+                backgroundWeight > 0.025f ->
+                    blend(color, target, backgroundWeight * 0.95f)
+                liftMask[i] -> improveForegroundPixel(color)
+                else -> color
             }
         }
 
@@ -724,23 +748,66 @@ class DarkIconEngine(private val size: Int = 256) {
         out.getPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
 
         for (i in pixels.indices) {
-            val c = pixels[i]
-            if (Color.alpha(c) < 8) continue
+            val color = pixels[i]
+            if (Color.alpha(color) < 8) continue
 
-            val distance = BitmapUtils.colorDistance(c, dominantColor)
+            val x = i % out.width
+            val y = i / out.width
+            val embeddedBrightDetail = isEmbeddedBrightDetail(
+                source = source,
+                x = x,
+                y = y,
+                background = dominantColor
+            )
+
+            val distance = BitmapUtils.colorDistance(color, dominantColor)
             val weight = 1f - BitmapUtils.smoothStep(24f, 88f, distance)
 
-            pixels[i] = if (weight > 0.03f) {
-                blend(c, target, weight * 0.95f)
-            } else if (liftMask[i]) {
-                improveForegroundPixel(c)
-            } else {
-                c
+            pixels[i] = when {
+                embeddedBrightDetail -> color
+                weight > 0.03f -> blend(color, target, weight * 0.95f)
+                liftMask[i] -> improveForegroundPixel(color)
+                else -> color
             }
         }
 
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
+    }
+
+    private fun isEmbeddedBrightDetail(
+        source: Bitmap,
+        x: Int,
+        y: Int,
+        background: Int
+    ): Boolean {
+        val color = source.getPixel(x, y)
+        if (BitmapUtils.luminance(color) < 0.68f) return false
+        if (BitmapUtils.colorDistance(color, background) > 48f) return false
+
+        var contrasting = 0
+        var sampled = 0
+        val radius = 8
+
+        for (dy in -radius..radius step 4) {
+            for (dx in -radius..radius step 4) {
+                if (dx == 0 && dy == 0) continue
+                val nx = (x + dx).coerceIn(0, source.width - 1)
+                val ny = (y + dy).coerceIn(0, source.height - 1)
+                val neighbor = source.getPixel(nx, ny)
+                if (Color.alpha(neighbor) <= 32) continue
+                sampled++
+
+                if (
+                    BitmapUtils.luminance(neighbor) < 0.32f &&
+                    BitmapUtils.colorDistance(neighbor, background) > 70f
+                ) {
+                    contrasting++
+                }
+            }
+        }
+
+        return sampled >= 6 && contrasting.toFloat() / sampled >= 0.20f
     }
 
     private fun buildLiftMask(source: Bitmap, background: Int): BooleanArray {
@@ -833,8 +900,8 @@ class DarkIconEngine(private val size: Int = 256) {
                     centerY in (height * 0.18f)..(height * 0.82f)
 
             val glyphLike =
-                coverage in 0.006f..0.20f &&
-                    fillRatio <= 0.58f &&
+                coverage in 0.002f..0.28f &&
+                    fillRatio <= 0.72f &&
                     central
 
             if (glyphLike) {
