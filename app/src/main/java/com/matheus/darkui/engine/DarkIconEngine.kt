@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 20
+        const val ENGINE_VERSION = 21
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -87,6 +87,26 @@ class DarkIconEngine(private val size: Int = 256) {
             )
         }
 
+        if (
+            analysis.dominantCanvasCoverage >= 0.24f &&
+            isNeutralLightColor(analysis.dominantColor)
+        ) {
+            return SmartIconResult(
+                bitmap = recolorDominantRegion(source, analysis.dominantColor),
+                method = "Dark automático • base clara convertida",
+                confidence = 0.96f
+            )
+        }
+
+        val uniformMaskedBase = detectUniformMaskedBase(source, analysis)
+        if (uniformMaskedBase != null) {
+            return SmartIconResult(
+                bitmap = recolorBackgroundLikePixels(source, uniformMaskedBase),
+                method = "Dark automático • base colorida convertida",
+                confidence = 0.96f
+            )
+        }
+
         // iOS-like enclosure treatment: for simple colored/gradient icon bases
         // with a distinct central glyph, replace only the enclosure with a true
         // dark base and keep the authored glyph pixels unchanged.
@@ -100,9 +120,9 @@ class DarkIconEngine(private val size: Int = 256) {
 
         if (
             analysis.opaqueCoverage >= 0.90f &&
-            analysis.colorBins > 40 &&
-            analysis.detail > 0.045f &&
-            analysis.dominantRatio < 0.12f
+            analysis.colorBins > 24 &&
+            analysis.detail > 0.02f &&
+            analysis.dominantRatio < 0.20f
         ) {
             return preserveArtwork(
                 source = source,
@@ -198,11 +218,59 @@ class DarkIconEngine(private val size: Int = 256) {
         val c11: Int
     )
 
+    private fun isNeutralLightColor(color: Int): Boolean {
+        if (Color.alpha(color) <= 32) return false
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+        return hsv[1] <= 0.16f && BitmapUtils.luminance(color) >= 0.52f
+    }
+
+    private fun detectUniformMaskedBase(
+        source: Bitmap,
+        analysis: IconAnalysis
+    ): Int? {
+        if (analysis.edgeOpaqueRatio >= 0.60f) return null
+
+        val samples = sampleOpaqueInnerBoundary(source)
+            .filter { Color.alpha(it) > 160 }
+        if (samples.isEmpty()) return null
+
+        val mean = BitmapUtils.meanOpaqueColor(samples)
+        if (!isUsefulBackgroundColor(mean) || isDarkBackgroundColor(mean)) return null
+
+        val uniformity = samples
+            .map { BitmapUtils.colorDistance(it, mean) }
+            .average()
+            .toFloat()
+        if (uniformity > 46f) return null
+
+        var opaque = 0
+        var matching = 0
+        for (y in 0 until source.height step 3) {
+            for (x in 0 until source.width step 3) {
+                val color = source.getPixel(x, y)
+                if (Color.alpha(color) <= 32) continue
+                opaque++
+                if (BitmapUtils.colorDistance(color, mean) < 58f) {
+                    matching++
+                }
+            }
+        }
+
+        if (opaque == 0) return null
+        val coverage = matching.toFloat() / opaque
+        return if (coverage >= 0.58f) mean else null
+    }
+
     private fun isSmoothEnclosureWithCentralGlyph(
         source: Bitmap,
         analysis: IconAnalysis
     ): Boolean {
-        if (analysis.isAlreadyDark || analysis.detail > 0.28f) return false
+        if (
+            analysis.isAlreadyDark ||
+            analysis.detail > 0.28f ||
+            analysis.edgeOpaqueRatio >= 0.75f
+        ) return false
 
         val model = buildEnclosureModel(source) ?: return false
         val width = (model.right - model.left + 1).coerceAtLeast(1)
@@ -290,12 +358,18 @@ class DarkIconEngine(private val size: Int = 256) {
         val centralRatio = centralForeground.toFloat() / foreground
         val usefulRatio = usefulForeground.toFloat() / foreground
 
-        return backgroundRatio >= 0.38f &&
-            foregroundRatio in 0.015f..0.46f &&
-            centralRatio >= 0.48f &&
-            usefulRatio >= 0.22f &&
-            components.count <= 20 &&
-            components.largestFillRatio <= 0.86f
+        return if (brandGradientBase) {
+            backgroundRatio >= 0.30f &&
+                foregroundRatio in 0.01f..0.55f &&
+                centralRatio >= 0.40f
+        } else {
+            backgroundRatio >= 0.46f &&
+                foregroundRatio in 0.015f..0.38f &&
+                centralRatio >= 0.55f &&
+                usefulRatio >= 0.35f &&
+                components.count <= 10 &&
+                components.largestFillRatio <= 0.78f
+        }
     }
 
     private data class ComponentStats(
