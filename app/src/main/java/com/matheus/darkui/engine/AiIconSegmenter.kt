@@ -117,12 +117,18 @@ class AiIconSegmenter(
             targetH = outputSize
         )
 
-        val stats = analyzeMask(resizedMask, outputSize, outputSize)
+        val cleanedMask = postProcessMask(
+            resizedMask,
+            outputSize,
+            outputSize
+        )
+
+        val stats = analyzeMask(cleanedMask, outputSize, outputSize)
         if (stats.foregroundRatio !in 0.025f..0.88f) return null
         if (stats.dynamicRange < 0.34f) return null
 
         return Segmentation(
-            mask = resizedMask,
+            mask = cleanedMask,
             width = outputSize,
             height = outputSize,
             confidence = stats.confidence,
@@ -135,6 +141,246 @@ class AiIconSegmenter(
         val dynamicRange: Float,
         val confidence: Float
     )
+
+    private fun postProcessMask(
+        source: FloatArray,
+        width: Int,
+        height: Int
+    ): FloatArray {
+        val binary = BooleanArray(source.size) { index ->
+            source[index] >= 0.50f
+        }
+
+        // Close small gaps first so logo strokes and object silhouettes remain whole.
+        val closed = erode(
+            dilate(binary, width, height, radius = 2),
+            width,
+            height,
+            radius = 2
+        )
+
+        // Remove isolated one-pixel / tiny islands without destroying real glyph parts.
+        val opened = dilate(
+            erode(closed, width, height, radius = 1),
+            width,
+            height,
+            radius = 1
+        )
+
+        val cleaned = removeTinyComponents(
+            opened,
+            width,
+            height,
+            minPixels = maxOf(20, (width * height * 0.0012f).toInt())
+        )
+
+        val filled = fillSmallHoles(
+            cleaned,
+            width,
+            height,
+            maxHolePixels = maxOf(64, (width * height * 0.025f).toInt())
+        )
+
+        // A small feather keeps anti-aliased boundaries, but the interior becomes
+        // effectively binary so the renderer can rebuild a truly uniform dark base.
+        return featherMask(filled, width, height)
+    }
+
+    private fun dilate(
+        input: BooleanArray,
+        width: Int,
+        height: Int,
+        radius: Int
+    ): BooleanArray {
+        val out = BooleanArray(input.size)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var hit = false
+                loop@ for (dy in -radius..radius) {
+                    for (dx in -radius..radius) {
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) continue
+                        if (input[ny * width + nx]) {
+                            hit = true
+                            break@loop
+                        }
+                    }
+                }
+                out[y * width + x] = hit
+            }
+        }
+        return out
+    }
+
+    private fun erode(
+        input: BooleanArray,
+        width: Int,
+        height: Int,
+        radius: Int
+    ): BooleanArray {
+        val out = BooleanArray(input.size)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var keep = true
+                loop@ for (dy in -radius..radius) {
+                    for (dx in -radius..radius) {
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) {
+                            keep = false
+                            break@loop
+                        }
+                        if (!input[ny * width + nx]) {
+                            keep = false
+                            break@loop
+                        }
+                    }
+                }
+                out[y * width + x] = keep
+            }
+        }
+        return out
+    }
+
+    private fun removeTinyComponents(
+        input: BooleanArray,
+        width: Int,
+        height: Int,
+        minPixels: Int
+    ): BooleanArray {
+        val out = input.copyOf()
+        val visited = BooleanArray(input.size)
+        val queue = IntArray(input.size)
+
+        for (start in input.indices) {
+            if (!input[start] || visited[start]) continue
+
+            var head = 0
+            var tail = 0
+            queue[tail++] = start
+            visited[start] = true
+            val component = ArrayList<Int>()
+
+            while (head < tail) {
+                val index = queue[head++]
+                component += index
+                val x = index % width
+                val y = index / width
+
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        if (dx == 0 && dy == 0) continue
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) continue
+                        val next = ny * width + nx
+                        if (input[next] && !visited[next]) {
+                            visited[next] = true
+                            queue[tail++] = next
+                        }
+                    }
+                }
+            }
+
+            if (component.size < minPixels) {
+                component.forEach { out[it] = false }
+            }
+        }
+
+        return out
+    }
+
+    private fun fillSmallHoles(
+        input: BooleanArray,
+        width: Int,
+        height: Int,
+        maxHolePixels: Int
+    ): BooleanArray {
+        val out = input.copyOf()
+        val visited = BooleanArray(input.size)
+        val queue = IntArray(input.size)
+
+        for (start in input.indices) {
+            if (input[start] || visited[start]) continue
+
+            var head = 0
+            var tail = 0
+            queue[tail++] = start
+            visited[start] = true
+            val component = ArrayList<Int>()
+            var touchesEdge = false
+
+            while (head < tail) {
+                val index = queue[head++]
+                component += index
+                val x = index % width
+                val y = index / width
+                if (x == 0 || y == 0 || x == width - 1 || y == height - 1) {
+                    touchesEdge = true
+                }
+
+                val neighbors = intArrayOf(
+                    x - 1, y,
+                    x + 1, y,
+                    x, y - 1,
+                    x, y + 1
+                )
+                var i = 0
+                while (i < neighbors.size) {
+                    val nx = neighbors[i]
+                    val ny = neighbors[i + 1]
+                    i += 2
+                    if (nx !in 0 until width || ny !in 0 until height) continue
+                    val next = ny * width + nx
+                    if (!input[next] && !visited[next]) {
+                        visited[next] = true
+                        queue[tail++] = next
+                    }
+                }
+            }
+
+            if (!touchesEdge && component.size <= maxHolePixels) {
+                component.forEach { out[it] = true }
+            }
+        }
+
+        return out
+    }
+
+    private fun featherMask(
+        input: BooleanArray,
+        width: Int,
+        height: Int
+    ): FloatArray {
+        val out = FloatArray(input.size)
+
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var foreground = 0
+                var samples = 0
+
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) continue
+                        samples++
+                        if (input[ny * width + nx]) foreground++
+                    }
+                }
+
+                val ratio = if (samples == 0) 0f else foreground.toFloat() / samples
+                out[y * width + x] = when {
+                    input[y * width + x] && ratio >= 0.88f -> 1f
+                    !input[y * width + x] && ratio <= 0.11f -> 0f
+                    else -> ratio.coerceIn(0f, 1f)
+                }
+            }
+        }
+
+        return out
+    }
 
     private fun analyzeMask(mask: FloatArray, width: Int, height: Int): MaskStats {
         var minValue = 1f
