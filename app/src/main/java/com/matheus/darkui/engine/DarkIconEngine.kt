@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 24
+        const val ENGINE_VERSION = 25
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -133,24 +133,47 @@ class DarkIconEngine(private val size: Int = 256) {
 
         for (i in pixels.indices) {
             val color = pixels[i]
-            if (Color.alpha(color) < 8) continue
+            val alpha = Color.alpha(color)
+            if (alpha < 8) continue
 
             val mask = foregroundMask[i].coerceIn(0f, 1f)
-            val foregroundWeight = BitmapUtils.smoothStep(0.38f, 0.68f, mask)
-            val backgroundWeight = 1f - foregroundWeight
+            val foregroundWeight = BitmapUtils.smoothStep(0.34f, 0.72f, mask)
 
-            pixels[i] = if (backgroundWeight > 0.04f) {
-                blend(color, DARK_NEUTRAL, backgroundWeight * 0.98f)
-            } else {
-                val luminance = BitmapUtils.luminance(color)
-                val hsv = FloatArray(3)
-                Color.colorToHSV(color, hsv)
+            pixels[i] = when {
+                foregroundWeight <= 0.08f -> {
+                    // Rebuild the background from scratch. Never keep residual
+                    // gradients/brand colors in confident background pixels.
+                    Color.argb(
+                        alpha,
+                        Color.red(DARK_NEUTRAL),
+                        Color.green(DARK_NEUTRAL),
+                        Color.blue(DARK_NEUTRAL)
+                    )
+                }
 
-                when {
-                    luminance > 0.70f -> color
-                    hsv[1] > 0.20f -> color
-                    aiLiftMask[i] && luminance < 0.22f -> improveForegroundPixel(color)
-                    else -> color
+                foregroundWeight >= 0.92f -> {
+                    val luminance = BitmapUtils.luminance(color)
+                    val hsv = FloatArray(3)
+                    Color.colorToHSV(color, hsv)
+
+                    when {
+                        luminance > 0.70f -> color
+                        hsv[1] > 0.20f -> color
+                        aiLiftMask[i] && luminance < 0.22f -> improveForegroundPixel(color)
+                        else -> color
+                    }
+                }
+
+                else -> {
+                    // Only the feathered boundary is blended. Interior background
+                    // is uniform and foreground pixels remain original.
+                    val dark = Color.argb(
+                        alpha,
+                        Color.red(DARK_NEUTRAL),
+                        Color.green(DARK_NEUTRAL),
+                        Color.blue(DARK_NEUTRAL)
+                    )
+                    blend(dark, color, foregroundWeight)
                 }
             }
         }
@@ -159,7 +182,7 @@ class DarkIconEngine(private val size: Int = 256) {
 
         return SmartIconResult(
             bitmap = out,
-            method = "IA local • foreground segmentado",
+            method = "IA local • fundo reconstruído",
             confidence = (
                 0.80f +
                     maskConfidence.coerceIn(0f, 1f) * 0.12f +
