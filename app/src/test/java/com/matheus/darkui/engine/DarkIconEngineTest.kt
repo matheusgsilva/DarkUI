@@ -1278,6 +1278,130 @@ class DarkIconEngineTest {
     }
 
     @Test
+    fun aiRebuildRemovesResidualGradientFromBackground() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint()
+
+        for (x in 0 until 256) {
+            val t = x / 255f
+            paint.color = Color.rgb(
+                245,
+                (30 + 80 * t).toInt(),
+                (210 - 135 * t).toInt().coerceAtLeast(55)
+            )
+            canvas.drawRect(x.toFloat(), 0f, x + 1f, 256f, paint)
+        }
+
+        paint.color = Color.WHITE
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 14f
+        canvas.drawCircle(128f, 128f, 46f, paint)
+
+        val mask = FloatArray(256 * 256)
+        for (y in 0 until 256) {
+            for (x in 0 until 256) {
+                val d = kotlin.math.hypot((x - 128).toDouble(), (y - 128).toDouble())
+                if (d in 36.0..56.0) mask[y * 256 + x] = 1f
+            }
+        }
+
+        val result = engine.generateWithAiMask(bitmap, mask, 0.96f)
+        assertNotNull(result)
+        result!!
+
+        val left = result.bitmap.getPixel(32, 128)
+        val right = result.bitmap.getPixel(224, 128)
+
+        assertTrue("AI gradient background must become dark", BitmapUtils.luminance(left) < 0.08f)
+        assertTrue("AI gradient background must become dark", BitmapUtils.luminance(right) < 0.08f)
+        assertTrue(
+            "background must be uniform instead of retaining gradient residue",
+            BitmapUtils.colorDistance(left, right) < 4f
+        )
+    }
+
+    @Test
+    fun aiRebuildIgnoresSmallBackgroundMaskLeakage() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(30, 170, 220))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        canvas.drawRect(86f, 78f, 170f, 178f, paint)
+
+        val mask = FloatArray(256 * 256)
+        for (y in 78 until 179) {
+            for (x in 86 until 171) {
+                mask[y * 256 + x] = 1f
+            }
+        }
+
+        // Simulate segmentation noise in the original background.
+        for (y in 34 until 46) {
+            for (x in 36 until 48) {
+                mask[y * 256 + x] = 0.15f
+            }
+        }
+
+        val result = engine.generateWithAiMask(bitmap, mask, 0.93f)
+        assertNotNull(result)
+        result!!
+
+        val cleanBackground = result.bitmap.getPixel(24, 24)
+        val noisyBackground = result.bitmap.getPixel(40, 40)
+
+        assertTrue(BitmapUtils.luminance(cleanBackground) < 0.08f)
+        assertTrue(BitmapUtils.luminance(noisyBackground) < 0.08f)
+        assertTrue(
+            "mask leakage must not create visible dark/color patches",
+            BitmapUtils.colorDistance(cleanBackground, noisyBackground) < 4f
+        )
+    }
+
+    @Test
+    fun aiRebuildPreservesIllustratedObjectPixelColors() {
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.rgb(238, 238, 238))
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.rgb(250, 195, 20)
+        canvas.drawRoundRect(RectF(68f, 56f, 188f, 202f), 14f, 14f, paint)
+        paint.color = Color.rgb(235, 65, 25)
+        canvas.drawCircle(128f, 128f, 24f, paint)
+
+        val mask = FloatArray(256 * 256)
+        for (y in 52 until 207) {
+            for (x in 64 until 193) {
+                mask[y * 256 + x] = 1f
+            }
+        }
+
+        val result = engine.generateWithAiMask(bitmap, mask, 0.95f)
+        assertNotNull(result)
+        result!!
+
+        val originalYellow = bitmap.getPixel(100, 90)
+        val renderedYellow = result.bitmap.getPixel(100, 90)
+        val originalRed = bitmap.getPixel(128, 128)
+        val renderedRed = result.bitmap.getPixel(128, 128)
+
+        assertTrue(
+            "illustrated object yellow must be preserved",
+            BitmapUtils.colorDistance(originalYellow, renderedYellow) < 6f
+        )
+        assertTrue(
+            "illustrated object red detail must be preserved",
+            BitmapUtils.colorDistance(originalRed, renderedRed) < 6f
+        )
+        assertTrue(
+            "only the external background should become dark",
+            BitmapUtils.luminance(result.bitmap.getPixel(28, 28)) < 0.08f
+        )
+    }
+
+    @Test
     fun generatedIconsAlwaysUseRequestedOutputSize() {
         val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
         Canvas(bitmap).drawColor(Color.rgb(40, 140, 220))
