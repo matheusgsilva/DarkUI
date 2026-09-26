@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 25
+        const val ENGINE_VERSION = 26
 
                 private const val DARK_NEUTRAL = 0xFF111113.toInt()
 
@@ -69,7 +69,7 @@ class DarkIconEngine(private val size: Int = 256) {
         if (isGame) return null
         if (source.width != size || source.height != size) return null
         if (foregroundMask.size != source.width * source.height) return null
-        if (maskConfidence < 0.34f) return null
+        if (maskConfidence < 0.72f) return null
 
         val analysis = analyze(source)
         if (analysis.isAlreadyDark) return null
@@ -115,10 +115,19 @@ class DarkIconEngine(private val size: Int = 256) {
         val edgeForegroundRatio =
             if (edgeOpaque == 0) 0f else edgeForeground.toFloat() / edgeOpaque
 
-        if (foregroundRatio !in 0.025f..0.82f) return null
-        if (backgroundRatio < 0.08f) return null
-        if (edgeForegroundRatio > 0.78f && foregroundRatio > 0.62f) return null
+        if (foregroundRatio !in 0.04f..0.72f) return null
+        if (backgroundRatio < 0.16f) return null
+        if (edgeForegroundRatio > 0.55f && foregroundRatio > 0.45f) return null
         if (backgroundColors.isEmpty()) return null
+
+        // Natural mode: only trust AI when it found a real enclosure/background.
+        // If the mask is uncertain on a detailed/full-bleed icon, fall back to the
+        // deterministic renderer so the original artwork is preserved.
+        if (
+            analysis.detail > 0.30f &&
+            analysis.colorBins > 48 &&
+            maskConfidence < 0.86f
+        ) return null
 
         val backgroundReference = BitmapUtils.meanOpaqueColor(backgroundColors)
         val aiLiftMask = if (isNeutralLightColor(backgroundReference)) {
