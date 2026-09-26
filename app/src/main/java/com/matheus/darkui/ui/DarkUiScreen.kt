@@ -80,7 +80,7 @@ fun DarkUiScreen(viewModel: DarkUiViewModel) {
                     Column {
                         Text("DarkUI", fontWeight = FontWeight.Bold)
                         Text(
-                            "Ícones Dark automáticos para One UI",
+                            "Ícones Dark naturais baseados nos seus apps",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -164,9 +164,9 @@ private fun SummaryCard(
             }
 
             Text(
-                "O tratamento é automático: logos simples recebem fundo Dark; " +
-                    "ícones em camadas preservam o símbolo; jogos e artes complexas " +
-                    "mantêm a composição original com luminosidade reduzida.",
+                "O DarkUI usa os ícones reais dos apps instalados no aparelho. " +
+                    "A forma, posição e desenho são preservados; só o fundo e a luminosidade " +
+                    "são adaptados quando a detecção é confiável.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -281,8 +281,8 @@ private fun PackActions(
         )
 
         Text(
-            "O DarkUI gera um único icon pack Dark. O Android pede confirmação " +
-                "para instalar e o Theme Park faz a aplicação final.",
+            "O DarkUI gera um único icon pack usando os apps instalados neste aparelho. " +
+                "Depois, o Theme Park aplica o pack na One UI.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
