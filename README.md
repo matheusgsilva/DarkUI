@@ -10,25 +10,27 @@ automatically.
 
 ## Dark rendering strategy
 
-The goal is to follow the same design principle Apple documents for generated icon
-appearances: keep the icon recognizable, preserve its core visual features and
-legibility, and generate a dark appearance when a dedicated dark asset is unavailable.
+The renderer follows the iOS 18/26/27 **Dark** app-icon appearance: keep the icon
+recognizable, but rebuild it on a dark background and move the brand color into the
+symbol.
 
-DarkUI adapts that principle to Android:
-
-- **Adaptive icons:** background and foreground layers are processed separately.
-  Colored backgrounds are moved to a dark version of the same hue while foreground
-  symbols stay legible.
-- **Flat legacy icons:** edge/background analysis identifies a simple background and
-  converts only background-like pixels.
-- **Transparent symbols:** the symbol is kept on a consistent dark One UI-style frame;
-  very dark glyphs are lifted enough to remain visible.
+- **One neutral dark plate:** every rebuilt background becomes the same graphite
+  plate (`#222226` at the top fading to `#0C0C0E`), never a darkened copy of the
+  brand color.
+- **Brand color moves to the glyph:** a white symbol drawn directly on a vivid
+  brand surface takes a light version of that brand color (a green chat bubble,
+  a blue envelope, a red bank logo). Gradient surfaces pass their local color, so
+  gradient brands get a gradient glyph. The tint is kept at a minimum luminance so
+  it stays readable on the plate.
+- **Colored and multicolor logos keep their colors**; only the background changes.
+- **Dark glyphs on light bases are lifted** so they stay visible on the plate.
+- **Enclosed details stay as authored:** white areas that do not touch the brand
+  surface (mascot eyes, lens highlights) are not tinted.
+- **Adaptive icons:** background and foreground layers are flattened through the
+  launcher mask, and only colors change, never geometry.
 - **Games and complex artwork:** the complete original artwork is preserved and only
-  its luminosity is reduced. The renderer does not try to cut cars, characters,
-  photos, or detailed scenes out of the icon.
+  its luminosity is reduced.
 - **Already-dark icons:** receive only a minimal treatment so they are not crushed.
-
-The final result uses one consistent rounded One UI-style mask.
 
 ## Icon-pack pipeline
 
@@ -66,8 +68,9 @@ GitHub Actions performs all of the following:
    resource deduplication);
 3. builds Debug and Release main APKs;
 4. checks that the template APK is embedded in the main app;
-5. runs renderer tests for adaptive/social-style icons, flat legacy icons,
-   transparent glyphs, games/complex artwork, and already-dark icons;
+5. runs renderer tests for the iOS-style plate and brand-to-glyph color transfer,
+   adaptive/social-style icons, flat legacy icons, transparent glyphs,
+   games/complex artwork, and already-dark icons;
 6. runs Android lint.
 
 ## Samsung flow
