@@ -115,7 +115,8 @@ class DarkIconEngineTest {
         val logo = result.bitmap.getPixel(128, 128)
 
         assertTrue("legacy background luminance=${BitmapUtils.luminance(background)}", BitmapUtils.luminance(background) < 0.14f)
-        assertTrue("legacy logo luminance=${BitmapUtils.luminance(logo)}", BitmapUtils.luminance(logo) > 0.70f)
+        assertNeutralPlate("legacy background", background)
+        assertBrandGlyph("legacy logo", logo, Color.rgb(24, 119, 242))
     }
 
     @Test
@@ -239,10 +240,8 @@ class DarkIconEngineTest {
             "gradient background luminance=${BitmapUtils.luminance(background)}",
             BitmapUtils.luminance(background) < 0.16f
         )
-        assertTrue(
-            "white logo luminance=${BitmapUtils.luminance(logo)}",
-            BitmapUtils.luminance(logo) > 0.65f
-        )
+        assertNeutralPlate("gradient background", background)
+        assertBrandGlyph("gradient logo", logo, bitmap.getPixel(128, 40))
         assertTrue(result.method.contains("gradiente"))
     }
 
@@ -375,10 +374,8 @@ class DarkIconEngineTest {
             "masked background should be dark; luminance=${BitmapUtils.luminance(result.getPixel(70, 70))}",
             BitmapUtils.luminance(result.getPixel(70, 70)) < 0.12f
         )
-        assertTrue(
-            "white logo should stay bright; luminance=${BitmapUtils.luminance(result.getPixel(128, 128))}",
-            BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f
-        )
+        assertNeutralPlate("masked background", result.getPixel(70, 70))
+        assertBrandGlyph("masked logo", result.getPixel(128, 128), Color.rgb(24, 119, 242))
 
         for (y in 0 until 256 step 8) {
             for (x in 0 until 256 step 8) {
@@ -648,7 +645,7 @@ class DarkIconEngineTest {
     }
 
     @Test
-    fun warmPinkRedGradientStaysSaturatedWhenDarkened() {
+    fun warmPinkRedGradientBecomesNeutralDarkPlate() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint()
@@ -663,21 +660,12 @@ class DarkIconEngineTest {
         }
 
         val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
-        val sample = result.getPixel(96, 128)
-        val hsv = FloatArray(3)
-        Color.colorToHSV(sample, hsv)
 
+        assertNeutralPlate("warm gradient left", result.getPixel(40, 128))
+        assertNeutralPlate("warm gradient right", result.getPixel(216, 128))
         assertTrue(
-            "warm gradient should be dark",
-            hsv[2] < 0.22f
-        )
-        assertTrue(
-            "warm gradient should keep saturation and not turn muddy",
-            hsv[1] > 0.50f
-        )
-        assertTrue(
-            "warm gradient should remain red/pink-family",
-            hsv[0] < 40f || hsv[0] >= 300f
+            "plate must not keep the gradient horizontally",
+            BitmapUtils.colorDistance(result.getPixel(40, 128), result.getPixel(216, 128)) < 6f
         )
     }
 
@@ -713,7 +701,7 @@ class DarkIconEngineTest {
     }
 
     @Test
-    fun redBankLikeIconKeepsRedHueAndWhiteLogo() {
+    fun redBankLikeIconMovesRedToLogoOnNeutralPlate() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -724,18 +712,13 @@ class DarkIconEngineTest {
         canvas.drawCircle(128f, 128f, 42f, paint)
 
         val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
-        val bg = result.getPixel(60, 60)
-        val hsv = FloatArray(3)
-        Color.colorToHSV(bg, hsv)
 
-        assertTrue("red background should become dark", hsv[2] < 0.22f)
-        assertTrue("red hue should remain red", hsv[0] < 30f || hsv[0] > 330f)
-        assertTrue("red saturation should remain strong", hsv[1] > 0.50f)
-        assertTrue("white logo should stay bright", BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f)
+        assertNeutralPlate("red bank background", result.getPixel(60, 60))
+        assertBrandGlyph("red bank logo", result.getPixel(128, 128), Color.rgb(225, 35, 45))
     }
 
     @Test
-    fun yellowBankLikeIconDoesNotTurnBrownOrGray() {
+    fun yellowBankLikeIconKeepsColoredLogoOnNeutralPlate() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -746,19 +729,14 @@ class DarkIconEngineTest {
         canvas.drawRect(92f, 102f, 164f, 154f, paint)
 
         val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
-        val bg = result.getPixel(60, 60)
-        val hsv = FloatArray(3)
-        Color.colorToHSV(bg, hsv)
 
-        assertTrue("yellow background should become dark", hsv[2] < 0.22f)
-        assertTrue("yellow should keep saturation", hsv[1] > 0.45f)
-        assertTrue("yellow hue should remain yellow/gold", hsv[0] in 35f..75f)
+        assertNeutralPlate("yellow bank background", result.getPixel(60, 60))
         val logo = result.getPixel(128, 128)
         assertTrue("blue bank logo should remain blue", Color.blue(logo) > Color.red(logo))
     }
 
     @Test
-    fun purplePinkGradientKeepsHueSeparationWithoutMud() {
+    fun purplePinkGradientBecomesUniformNeutralPlate() {
         val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint()
@@ -775,14 +753,10 @@ class DarkIconEngineTest {
         val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
         val left = result.getPixel(40, 128)
         val right = result.getPixel(216, 128)
-        val leftHsv = FloatArray(3)
-        val rightHsv = FloatArray(3)
-        Color.colorToHSV(left, leftHsv)
-        Color.colorToHSV(right, rightHsv)
 
-        assertTrue("purple side lost saturation", leftHsv[1] > 0.45f)
-        assertTrue("pink side lost saturation", rightHsv[1] > 0.45f)
-        assertTrue("gradient hue separation collapsed", kotlin.math.abs(leftHsv[0] - rightHsv[0]) > 10f)
+        assertNeutralPlate("purple side", left)
+        assertNeutralPlate("pink side", right)
+        assertTrue("plate must be uniform across the row", BitmapUtils.colorDistance(left, right) < 6f)
     }
 
     @Test
@@ -825,7 +799,8 @@ class DarkIconEngineTest {
         val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
 
         assertTrue("blue base should darken", BitmapUtils.luminance(result.getPixel(60, 60)) < 0.16f)
-        assertTrue("white control should remain bright", BitmapUtils.luminance(result.getPixel(88, 90)) > 0.70f)
+        assertNeutralPlate("two-tone background", result.getPixel(60, 60))
+        assertBrandGlyph("white control", result.getPixel(88, 90), Color.rgb(35, 155, 220))
         val green = result.getPixel(88, 128)
         val pink = result.getPixel(160, 170)
         assertTrue("green accent lost", Color.green(green) > Color.red(green))
@@ -880,7 +855,7 @@ class DarkIconEngineTest {
     }
 
     @Test
-    fun saturatedBrandPaletteKeepsHueAcrossDarkConversion() {
+    fun saturatedBrandPaletteMovesHueFromBackgroundToGlyph() {
         val brandColors = listOf(
             Color.rgb(235, 45, 55),
             Color.rgb(245, 115, 25),
@@ -903,32 +878,9 @@ class DarkIconEngineTest {
             canvas.drawCircle(128f, 128f, 34f, paint)
 
             val result = engine.generate(BitmapDrawable(resources, bitmap)).bitmap
-            val converted = result.getPixel(60, 60)
 
-            val before = FloatArray(3)
-            val after = FloatArray(3)
-            Color.colorToHSV(originalColor, before)
-            Color.colorToHSV(converted, after)
-
-            val hueDeltaRaw = kotlin.math.abs(before[0] - after[0])
-            val hueDelta = minOf(hueDeltaRaw, 360f - hueDeltaRaw)
-
-            assertTrue(
-                "brand hue drifted too much: before=${before[0]} after=${after[0]}",
-                hueDelta < 12f
-            )
-            assertTrue(
-                "brand saturation collapsed: before=${before[1]} after=${after[1]}",
-                after[1] > 0.42f
-            )
-            assertTrue(
-                "brand background did not become dark: value=${after[2]}",
-                after[2] < 0.22f
-            )
-            assertTrue(
-                "white logo lost brightness",
-                BitmapUtils.luminance(result.getPixel(128, 128)) > 0.70f
-            )
+            assertNeutralPlate("brand $originalColor background", result.getPixel(60, 60))
+            assertBrandGlyph("brand $originalColor glyph", result.getPixel(128, 128), originalColor)
         }
     }
 
@@ -985,10 +937,7 @@ class DarkIconEngineTest {
             "dark enclosure should no longer retain a muddy gradient",
             BitmapUtils.colorDistance(leftBackground, rightBackground) < 24f
         )
-        assertTrue(
-            "white camera glyph should remain bright",
-            BitmapUtils.luminance(out.getPixel(128, 72)) > 0.70f
-        )
+        assertBrandGlyph("camera glyph", out.getPixel(128, 72), bitmap.getPixel(128, 40))
         assertTrue(
             "transparent outside corner must remain transparent",
             Color.alpha(out.getPixel(4, 4)) == 0
@@ -1082,12 +1031,8 @@ class DarkIconEngineTest {
             !result.method.contains("glyph preservado")
         )
 
-        val bg = result.bitmap.getPixel(52, 52)
-        val hsv = FloatArray(3)
-        Color.colorToHSV(bg, hsv)
-        assertTrue("red identity should be retained", hsv[0] < 35f || hsv[0] > 325f)
-        assertTrue("red should remain saturated", hsv[1] > 0.45f)
-        assertTrue("white person glyph should remain bright", BitmapUtils.luminance(result.bitmap.getPixel(128, 100)) > 0.70f)
+        assertNeutralPlate("contacts background", result.bitmap.getPixel(52, 52))
+        assertBrandGlyph("person glyph", result.bitmap.getPixel(128, 100), Color.rgb(245, 48, 58))
     }
 
     @Test
@@ -1157,6 +1102,9 @@ class DarkIconEngineTest {
             "mascot eyes should remain bright",
             BitmapUtils.luminance(result.bitmap.getPixel(92, 105)) > 0.60f
         )
+        val eyeHsv = FloatArray(3)
+        Color.colorToHSV(result.bitmap.getPixel(92, 105), eyeHsv)
+        assertTrue("enclosed mascot eyes must not take the brand color", eyeHsv[1] < 0.15f)
         assertTrue(
             "mascot pupils should remain dark",
             BitmapUtils.luminance(result.bitmap.getPixel(92, 120)) < 0.22f
@@ -1231,10 +1179,8 @@ class DarkIconEngineTest {
             "AI enclosure should become dark",
             BitmapUtils.luminance(result.bitmap.getPixel(40, 40)) < 0.10f
         )
-        assertTrue(
-            "bright foreground should remain bright",
-            BitmapUtils.luminance(result.bitmap.getPixel(128, 128)) > 0.90f
-        )
+        assertNeutralPlate("AI enclosure", result.bitmap.getPixel(40, 40))
+        assertBrandGlyph("AI white foreground", result.bitmap.getPixel(128, 128), Color.rgb(245, 55, 155))
     }
 
     @Test
@@ -1410,6 +1356,35 @@ class DarkIconEngineTest {
 
         assertTrue(result.bitmap.width == 256)
         assertTrue(result.bitmap.height == 256)
+    }
+
+    private fun assertNeutralPlate(label: String, color: Int) {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+        assertTrue(
+            "$label should be the dark graphite plate; luminance=${BitmapUtils.luminance(color)}",
+            BitmapUtils.luminance(color) < 0.04f
+        )
+        assertTrue("$label should be neutral, not brand-tinted; saturation=${hsv[1]}", hsv[1] < 0.16f)
+    }
+
+    private fun assertBrandGlyph(label: String, glyph: Int, brand: Int) {
+        val glyphHsv = FloatArray(3)
+        val brandHsv = FloatArray(3)
+        Color.colorToHSV(glyph, glyphHsv)
+        Color.colorToHSV(brand, brandHsv)
+        val hueDeltaRaw = kotlin.math.abs(glyphHsv[0] - brandHsv[0])
+        val hueDelta = minOf(hueDeltaRaw, 360f - hueDeltaRaw)
+
+        assertTrue(
+            "$label should take the brand hue: brand=${brandHsv[0]} glyph=${glyphHsv[0]}",
+            hueDelta < 15f
+        )
+        assertTrue("$label should be tinted; saturation=${glyphHsv[1]}", glyphHsv[1] > 0.20f)
+        assertTrue(
+            "$label should stay readable on the plate; luminance=${BitmapUtils.luminance(glyph)}",
+            BitmapUtils.luminance(glyph) >= 0.28f
+        )
     }
 
     private fun averageResultLuminanceForOriginalDarkPixels(

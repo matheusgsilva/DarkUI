@@ -21,9 +21,17 @@ import kotlin.math.roundToInt
  */
 class DarkIconEngine(private val size: Int = 256) {
     companion object {
-        const val ENGINE_VERSION = 25
+        const val ENGINE_VERSION = 26
 
-                private const val DARK_NEUTRAL = 0xFF111113.toInt()
+        // iOS 26/27 dark appearance: every rebuilt enclosure uses the same
+        // neutral graphite plate, slightly lighter at the top, never a darkened
+        // copy of the brand color.
+        private const val PLATE_TOP = 0xFF222226.toInt()
+        private const val PLATE_BOTTOM = 0xFF0C0C0E.toInt()
+
+        // Minimum relative luminance for a glyph that inherits the brand color,
+        // so it keeps enough contrast against the dark plate.
+        private const val BRAND_GLYPH_MIN_LUMINANCE = 0.30f
 
         private const val SEGMENT_EDGE_UNIFORMITY_MAX = 42f
         private const val SEGMENT_MIN_BACKGROUND_COVERAGE = 0.24f
@@ -143,12 +151,7 @@ class DarkIconEngine(private val size: Int = 256) {
                 foregroundWeight <= 0.08f -> {
                     // Rebuild the background from scratch. Never keep residual
                     // gradients/brand colors in confident background pixels.
-                    Color.argb(
-                        alpha,
-                        Color.red(DARK_NEUTRAL),
-                        Color.green(DARK_NEUTRAL),
-                        Color.blue(DARK_NEUTRAL)
-                    )
+                    withAlpha(plateAt(i / out.width, out.height), alpha)
                 }
 
                 foregroundWeight >= 0.92f -> {
@@ -167,17 +170,13 @@ class DarkIconEngine(private val size: Int = 256) {
                 else -> {
                     // Only the feathered boundary is blended. Interior background
                     // is uniform and foreground pixels remain original.
-                    val dark = Color.argb(
-                        alpha,
-                        Color.red(DARK_NEUTRAL),
-                        Color.green(DARK_NEUTRAL),
-                        Color.blue(DARK_NEUTRAL)
-                    )
+                    val dark = withAlpha(plateAt(i / out.width, out.height), alpha)
                     blend(dark, color, foregroundWeight)
                 }
             }
         }
 
+        transferBrandToGlyph(source, pixels) { _, _ -> backgroundReference }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
 
         return SmartIconResult(
@@ -587,7 +586,6 @@ class DarkIconEngine(private val size: Int = 256) {
 
         val modelWidth = (model.right - model.left + 1).coerceAtLeast(1)
         val modelHeight = (model.bottom - model.top + 1).coerceAtLeast(1)
-        val darkBase = Color.rgb(12, 12, 16)
 
         for (y in model.top..model.bottom) {
             val ty = if (modelHeight <= 1) 0f else (y - model.top) / (modelHeight - 1f)
@@ -611,15 +609,26 @@ class DarkIconEngine(private val size: Int = 256) {
                 val backgroundWeight = 1f - foregroundWeight
 
                 pixels[index] = if (backgroundWeight > 0.04f) {
-                    blend(color, darkBase, backgroundWeight * 0.98f)
+                    blend(color, plateAt(y, out.height), backgroundWeight)
                 } else {
                     preserveOrLiftGlyphPixel(color)
                 }
             }
         }
 
+        transferBrandToGlyph(source, pixels) { x, y ->
+            enclosureColorAt(model, x, y)
+        }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
+    }
+
+    private fun enclosureColorAt(model: EnclosureModel, x: Int, y: Int): Int {
+        val width = (model.right - model.left + 1).coerceAtLeast(1)
+        val height = (model.bottom - model.top + 1).coerceAtLeast(1)
+        val tx = if (width <= 1) 0f else ((x - model.left) / (width - 1f)).coerceIn(0f, 1f)
+        val ty = if (height <= 1) 0f else ((y - model.top) / (height - 1f)).coerceIn(0f, 1f)
+        return bilinearColor(model.c00, model.c10, model.c01, model.c11, tx, ty)
     }
 
     private fun preserveOrLiftGlyphPixel(color: Int): Int {
@@ -839,7 +848,6 @@ class DarkIconEngine(private val size: Int = 256) {
             return source.copy(Bitmap.Config.ARGB_8888, false)
         }
 
-        val target = deriveDarkVariant(background)
         val hsv = FloatArray(3)
         Color.colorToHSV(background, hsv)
         val allowDarkGlyphLift =
@@ -873,12 +881,13 @@ class DarkIconEngine(private val size: Int = 256) {
             pixels[i] = when {
                 embeddedBrightDetail -> color
                 backgroundWeight > 0.025f ->
-                    blend(color, target, backgroundWeight * 0.95f)
+                    blend(color, plateAt(y, out.height), backgroundWeight)
                 liftMask[i] -> improveForegroundPixel(color)
                 else -> color
             }
         }
 
+        transferBrandToGlyph(source, pixels) { _, _ -> background }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
     }
@@ -911,8 +920,7 @@ class DarkIconEngine(private val size: Int = 256) {
                 val backgroundWeight = 1f - BitmapUtils.smoothStep(34f, 92f, distance)
 
                 pixels[index] = if (backgroundWeight > 0.04f) {
-                    val target = deriveDarkVariant(expected)
-                    blend(c, target, backgroundWeight * 0.96f)
+                    blend(c, plateAt(y, out.height), backgroundWeight)
                 } else {
                     // Gradient icons usually already use a bright/colored mark.
                     // Preserve the mark exactly instead of globally lifting it.
@@ -921,6 +929,11 @@ class DarkIconEngine(private val size: Int = 256) {
             }
         }
 
+        transferBrandToGlyph(source, pixels) { x, y ->
+            val tx = if (out.width <= 1) 0f else x / (out.width - 1f)
+            val ty = if (out.height <= 1) 0f else y / (out.height - 1f)
+            bilinearColor(c00, c10, c01, c11, tx, ty)
+        }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
     }
@@ -950,7 +963,6 @@ class DarkIconEngine(private val size: Int = 256) {
     }
 
     private fun recolorDominantRegion(source: Bitmap, dominantColor: Int): Bitmap {
-        val target = deriveDarkVariant(dominantColor)
         val hsv = FloatArray(3)
         Color.colorToHSV(dominantColor, hsv)
         val allowDarkGlyphLift =
@@ -982,12 +994,16 @@ class DarkIconEngine(private val size: Int = 256) {
 
             pixels[i] = when {
                 embeddedBrightDetail -> color
-                weight > 0.03f -> blend(color, target, weight * 0.95f)
+                weight > 0.03f -> blend(color, plateAt(y, out.height), weight)
                 liftMask[i] -> improveForegroundPixel(color)
                 else -> color
             }
         }
 
+        // The dominant color is a quantized bin center; refine it to the real
+        // surface color before using it as the brand reference.
+        val brand = meanColorNear(source, dominantColor, 56f)
+        transferBrandToGlyph(source, pixels) { _, _ -> brand }
         out.setPixels(pixels, 0, out.width, 0, 0, out.width, out.height)
         return out
     }
@@ -1156,33 +1172,174 @@ class DarkIconEngine(private val size: Int = 256) {
         return output
     }
 
-    private fun deriveDarkVariant(original: Int): Int {
+    /** Neutral iOS-style dark plate color for row [y]. */
+    private fun plateAt(y: Int, height: Int): Int {
+        val t = if (height <= 1) 0f else (y / (height - 1f)).coerceIn(0f, 1f)
+        return blend(PLATE_TOP, PLATE_BOTTOM, t)
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+
+    /** A saturated, reasonably bright surface whose color can move to the glyph. */
+    private fun isVividBrandColor(color: Int): Boolean {
+        if (Color.alpha(color) <= 32) return false
         val hsv = FloatArray(3)
-        Color.colorToHSV(original, hsv)
+        Color.colorToHSV(color, hsv)
+        return hsv[1] >= 0.30f && hsv[2] >= 0.40f
+    }
 
-        val hue = hsv[0]
-        val saturation = hsv[1]
-        val value = hsv[2]
+    /**
+     * Light version of the brand color used for glyphs on the dark plate, as iOS
+     * does for white symbols (green Messages bubble, blue Mail envelope).
+     */
+    private fun brandGlyphColor(brand: Int): Int {
+        val hsv = FloatArray(3)
+        Color.colorToHSV(brand, hsv)
+        hsv[1] = hsv[1].coerceIn(0.40f, 0.85f)
+        hsv[2] = 1f
+        var tinted = Color.HSVToColor(255, hsv)
+        while (BitmapUtils.luminance(tinted) < BRAND_GLYPH_MIN_LUMINANCE && hsv[1] > 0.20f) {
+            hsv[1] -= 0.05f
+            tinted = Color.HSVToColor(255, hsv)
+        }
+        return tinted
+    }
 
-        if (saturation < 0.10f) {
-            return Color.rgb(24, 24, 28)
+    /**
+     * Where [color] lies on the segment from [brand] (0) to white (1), or -1 when
+     * it is not a mix of the two (colored accents, dark details, shadows).
+     */
+    private fun whiteFraction(color: Int, brand: Int): Float {
+        val dr = 255f - Color.red(brand)
+        val dg = 255f - Color.green(brand)
+        val db = 255f - Color.blue(brand)
+        val lengthSq = dr * dr + dg * dg + db * db
+        if (lengthSq < 1f) return -1f
+
+        val cr = (Color.red(color) - Color.red(brand)).toFloat()
+        val cg = (Color.green(color) - Color.green(brand)).toFloat()
+        val cb = (Color.blue(color) - Color.blue(brand)).toFloat()
+        val t = ((cr * dr + cg * dg + cb * db) / lengthSq).coerceIn(0f, 1f)
+
+        val rr = cr - dr * t
+        val rg = cg - dg * t
+        val rb = cb - db * t
+        val residual = kotlin.math.sqrt(rr * rr + rg * rg + rb * rb)
+        return if (residual <= 30f) t else -1f
+    }
+
+    private fun meanColorNear(source: Bitmap, reference: Int, maxDistance: Float): Int {
+        val samples = ArrayList<Int>()
+        for (y in 0 until source.height step 2) {
+            for (x in 0 until source.width step 2) {
+                val color = source.getPixel(x, y)
+                if (Color.alpha(color) <= 160) continue
+                if (BitmapUtils.colorDistance(color, reference) < maxDistance) samples += color
+            }
+        }
+        return if (samples.isEmpty()) reference else BitmapUtils.meanOpaqueColor(samples)
+    }
+
+    /**
+     * iOS dark-appearance color transfer: a white symbol drawn directly on a
+     * vivid brand surface takes that brand color once the surface becomes the
+     * dark plate. Only white components touching the brand surface qualify, so
+     * enclosed details (mascot eyes, lens highlights) and multicolor logos keep
+     * their authored colors.
+     */
+    private fun transferBrandToGlyph(
+        source: Bitmap,
+        pixels: IntArray,
+        brandAt: (x: Int, y: Int) -> Int
+    ) {
+        val width = source.width
+        val height = source.height
+        val whiteness = FloatArray(width * height) { -1f }
+        val tints = IntArray(width * height)
+        var opaque = 0
+
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val color = source.getPixel(x, y)
+                if (Color.alpha(color) <= 8) continue
+                opaque++
+                val brand = brandAt(x, y)
+                if (!isVividBrandColor(brand)) continue
+                val index = y * width + x
+                whiteness[index] = whiteFraction(color, brand)
+                if (whiteness[index] > 0.02f) tints[index] = brandGlyphColor(brand)
+            }
+        }
+        if (opaque == 0) return
+
+        fun isCore(index: Int) = whiteness[index] >= 0.55f
+        fun isSurface(index: Int) = whiteness[index] in 0f..0.12f
+
+        val accepted = BooleanArray(width * height)
+        val visited = BooleanArray(width * height)
+        val queue = IntArray(width * height)
+        val component = ArrayList<Int>()
+
+        for (start in whiteness.indices) {
+            if (!isCore(start) || visited[start]) continue
+
+            var head = 0
+            var tail = 0
+            queue[tail++] = start
+            visited[start] = true
+            component.clear()
+            var touchesSurface = false
+
+            while (head < tail) {
+                val index = queue[head++]
+                component += index
+                val x = index % width
+                val y = index / width
+
+                for (dy in -3..3) {
+                    for (dx in -3..3) {
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx !in 0 until width || ny !in 0 until height) continue
+                        val next = ny * width + nx
+                        if (!touchesSurface && isSurface(next)) touchesSurface = true
+                        if (abs(dx) <= 1 && abs(dy) <= 1 && isCore(next) && !visited[next]) {
+                            visited[next] = true
+                            queue[tail++] = next
+                        }
+                    }
+                }
+            }
+
+            if (touchesSurface && component.size <= opaque * 0.50f) {
+                component.forEach { accepted[it] = true }
+            }
         }
 
-        val isWarm = hue < 28f || hue >= 300f
-
-        hsv[1] = if (isWarm) {
-            (saturation * 0.98f).coerceIn(0.55f, 1f)
-        } else {
-            (saturation * 0.95f).coerceIn(0.28f, 1f)
+        // Antialiased glyph edges sit between the core and the surface.
+        val edge = BooleanArray(width * height)
+        for (index in accepted.indices) {
+            if (!accepted[index]) continue
+            val x = index % width
+            val y = index / width
+            for (dy in -2..2) {
+                for (dx in -2..2) {
+                    val nx = x + dx
+                    val ny = y + dy
+                    if (nx !in 0 until width || ny !in 0 until height) continue
+                    val next = ny * width + nx
+                    if (!accepted[next] && whiteness[next] > 0.02f) edge[next] = true
+                }
+            }
         }
 
-        hsv[2] = if (isWarm) {
-            (0.15f + value * 0.03f).coerceIn(0.14f, 0.19f)
-        } else {
-            (0.12f + value * 0.025f).coerceIn(0.11f, 0.16f)
+        for (index in pixels.indices) {
+            if (!accepted[index] && !edge[index]) continue
+            val alpha = Color.alpha(source.getPixel(index % width, index / width))
+            val plate = plateAt(index / width, height)
+            pixels[index] = withAlpha(blend(plate, tints[index], whiteness[index]), alpha)
         }
-
-        return Color.HSVToColor(255, hsv)
     }
 
     private fun preserveArtwork(
